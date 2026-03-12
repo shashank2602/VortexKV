@@ -1,0 +1,21 @@
+add_executable(BenchmarkCompactString benchmarkCompactString.cpp)
+target_link_libraries(BenchmarkCompactString PRIVATE RapidKV_Storage benchmark::benchmark_main)
+set_target_properties(BenchmarkCompactString PROPERTIES FOLDER "Benchmarks")
+
+add_executable(BenchmarkFlatMap benchmarkFlatMap.cpp)
+target_link_libraries(BenchmarkFlatMap PRIVATE RapidKV_Storage benchmark::benchmark_main)
+set_target_properties(BenchmarkFlatMap PROPERTIES FOLDER "Benchmarks")
+
+add_executable(BenchmarkDatabase benchmarkDatabase.cpp)
+target_link_libraries(BenchmarkDatabase PRIVATE RapidKV_Storage benchmark::benchmark_main)
+set_target_properties(BenchmarkDatabase PROPERTIES FOLDER "Benchmarks")
+
+add_executable(BenchmarkCommandDispatcher benchmarkCommandDispatcher.cpp)
+target_link_libraries(BenchmarkCommandDispatcher PRIVATE RapidKV_Commands RapidKV_Storage benchmark::benchmark_main)
+set_target_properties(BenchmarkCommandDispatcher PROPERTIES FOLDER "Benchmarks")
+
+
+
+
+
+
