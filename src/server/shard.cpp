@@ -25,10 +25,15 @@ Shard::~Shard()
 
 void Shard::AcceptConnection(tcp::socket socket)
 {
-	asio::post(m_ioContext, [socket = std::move(socket), this]() mutable {
+	auto protocol = socket.local_endpoint().protocol();
+	auto nativeHandle = socket.release();
+
+	asio::post(m_ioContext, [nativeHandle, protocol, this]() mutable {
+		tcp::socket shardSocket(m_ioContext);
+		shardSocket.assign(protocol, nativeHandle);
 		asio::ip::tcp::no_delay option(true);
-		socket.set_option(option);
-		std::make_shared<Connection>(std::move(socket), m_routingHashSeed, m_shardPool, m_id)->Start();
+		shardSocket.set_option(option);
+		std::make_shared<Connection>(std::move(shardSocket), m_routingHashSeed, m_shardPool, m_id)->Start();
 	});
 }
 
