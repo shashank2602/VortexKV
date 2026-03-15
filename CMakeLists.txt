@@ -61,6 +61,7 @@ add_library(RapidKV_Utility STATIC
     inc/utility/utility.h
     src/utility/linearBuffer.cpp
     inc/utility/linearBuffer.h
+    inc/utility/config.h
 )
 target_include_directories(RapidKV_Utility PUBLIC
     inc/utility
