@@ -114,6 +114,8 @@ add_executable(RapidKV
     inc/server/server.h
     src/server/connection.cpp
     inc/server/connection.h
+    src/server/shard.cpp
+    inc/server/shard.h
 )
 
 target_include_directories(RapidKV PRIVATE

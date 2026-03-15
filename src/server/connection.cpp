@@ -1,11 +1,16 @@
 #include "connection.h"
+#include "shard.h"
+#include "rapidhash.h"
 
 #include <iostream>
 
-Connection::Connection(tcp::socket socket, CommandDispatcher& dispatcher, Database& database) :m_socket(std::move(socket)), m_dispatcher(dispatcher), m_database(database),
-																							m_pPrimaryResponseBuffer(std::make_unique<LinearBuffer>()),
-																							m_pSecondaryResponseBuffer(std::make_unique<LinearBuffer>()),
-																							m_writingInProgress(false)
+Connection::Connection(tcp::socket socket, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool, int shardId) :
+																	m_socket(std::move(socket)), m_ownerShard(*shardPool[shardId]),
+																	m_dispatcher(m_ownerShard.GetDispatcher()), m_database(m_ownerShard.GetDatabase()),
+																	m_pPrimaryResponseBuffer(std::make_unique<LinearBuffer>()),
+																	m_pSecondaryResponseBuffer(std::make_unique<LinearBuffer>()),
+																	m_writingInProgress(false), m_routingHashSeed(routingHashSeed), m_shardPool(shardPool),
+																	m_shardId(shardId), m_pipelinedResponses(16)	
 {
 	//std::cout << "New connection accepted." << std::endl;
 }
@@ -36,97 +41,120 @@ void Connection::DoRead()
 
 			m_requestBuffer.seekWrite(bytesRead);
 
-			constexpr int pipelineSize = 16;
-			CommandRequest CommandRequests[pipelineSize];
+			//constexpr int pipelineSize = 16;
+			CommandRequest commandRequest;
 
 
 			while (true)
-			{
-				int currentPipelineIndex = 0;
-				bool errorOccurredInParsing = false;
-				bool pipelineFull = false;
-				uint64_t totalBytesConsumed = 0;
+			{	
+				commandRequest.reset();
+				
+				std::string_view currentDataView = m_requestBuffer.getView();
 
-				while (currentPipelineIndex < pipelineSize)
+				auto [parseStatus, bytesConsumed] = RESPParser::parse(currentDataView.substr(m_bytesConsumedInPipeline), commandRequest);
+
+				if (parseStatus == ParseStatus::Success)
 				{
-					CommandRequests[currentPipelineIndex].reset();
-					std::string_view currentDataView = m_requestBuffer.getView();
-
-					auto [parseStatus, bytesConsumed] = RESPParser::parse(currentDataView.substr(totalBytesConsumed), CommandRequests[currentPipelineIndex]);
-
-					if (parseStatus == ParseStatus::Success)
-					{
-						/*std::cout<<command.type<< " ";
-						for (auto str : command.arguments)
-							std::cout << str << " ";
-						std::cout << "\n";*/
-					}
-					else if (parseStatus == ParseStatus::Error)
-					{
-						errorOccurredInParsing = true;
-						break;
-					}
-					else if (parseStatus == ParseStatus::IncompleteData)
-					{
-						break;
-					}
-
-					++currentPipelineIndex;
-					totalBytesConsumed += bytesConsumed;
+					/*std::cout<<command.type<< " ";
+					for (auto str : command.arguments)
+						std::cout << str << " ";
+					std::cout << "\n";*/
 				}
-
-				pipelineFull = (currentPipelineIndex == pipelineSize);
-
-				if (currentPipelineIndex == 0)
+				else if (parseStatus == ParseStatus::Error)
 				{
-					if (errorOccurredInParsing) [[unlikely]]
-					{
-						CloseConnection();
-						return;
-					}
+					m_invalidProtocolError = true;
+					break;
+				}
+				else if (parseStatus == ParseStatus::IncompleteData)
+				{
+					m_pipelineReadingComplete = true;
 					break;
 				}
 
-				constexpr int LOOKAHEAD = 4;
-
-				for (int i = 0; i < std::min(LOOKAHEAD, currentPipelineIndex); ++i)
-				{
-					if (!CommandRequests[i].arguments.empty())
-						m_database.prefetchForKey(CommandRequests[i].arguments[0]);
-				}
-
-				for (int i = 0; i < currentPipelineIndex; i++)
-				{
-					int prefetchIdx = i + LOOKAHEAD;
-					if (prefetchIdx < currentPipelineIndex && !CommandRequests[prefetchIdx].arguments.empty())
-						m_database.prefetchForKey(CommandRequests[prefetchIdx].arguments[0]);
-
-					m_dispatcher.dispatch(CommandRequests[i], m_database, *m_pSecondaryResponseBuffer);
-				}
-
-				m_requestBuffer.seekRead(totalBytesConsumed);
-
-
-				if (errorOccurredInParsing) [[unlikely]]
-				{
-					CloseConnection();
-					return;
-				}
-
-				if(!pipelineFull)
-					break;
+				m_bytesConsumedInPipeline += bytesConsumed;
+				m_pipelinedRequestCount++;
+				
+				RouteRequest(m_pipelinedRequestCount - 1, commandRequest);
 			}
-
-
-			TryWrite();
-
-			if (CheckResponseBufferLimits())
-				DoRead();
-					
 			
+			m_pipelineReadingComplete = true;
+			if(m_pipelinedRequestCount == m_pipelinedResponseCount)
+				FlushPipelinedResponses();
 		}
 	);
 }
+
+
+void Connection::RouteRequest(int requestIndex, CommandRequest& request)
+{
+	int targetShardId;
+
+	if (request.arguments.empty())
+	{
+		targetShardId = m_shardId;
+	}
+	else
+	{
+		uint64_t hash = rapidhash_withSeed(request.arguments[0].data(), request.arguments[0].size(), m_routingHashSeed);
+		targetShardId = hash % m_shardPool.size();
+	}
+
+	//std::cout<<"Owner shard: " << m_shardId << ", Target shard: " << targetShardId << std::endl;
+
+	if(requestIndex >= m_pipelinedResponses.size())
+		m_pipelinedResponses.resize(m_pipelinedResponses.size() * 2);
+
+	if (targetShardId == m_shardId)
+	{
+		thread_local LinearBuffer localResponseBuffer(256);
+		localResponseBuffer.reset();
+		m_dispatcher.dispatch(request, m_database, localResponseBuffer);
+		m_pipelinedResponses[requestIndex].assign(localResponseBuffer.readPtr(), localResponseBuffer.size());
+		m_pipelinedResponseCount++;
+	}
+	else
+	{
+		auto self = shared_from_this();
+		m_shardPool[targetShardId]->ExecuteRemote(std::move(request), m_ownerShard.GetIOContext(),
+			[self, this, requestIndex](InlineReponseBuffer responseBuffer) {
+
+				m_pipelinedResponses[requestIndex] = std::move(responseBuffer);
+				m_pipelinedResponseCount++;
+				
+				if(m_pipelineReadingComplete && m_pipelinedRequestCount == m_pipelinedResponseCount)
+					FlushPipelinedResponses();
+			}
+			
+		);
+	}
+}
+
+
+void Connection::FlushPipelinedResponses()
+{
+	for(int i = 0; i < m_pipelinedRequestCount; ++i)
+		m_pSecondaryResponseBuffer->append(m_pipelinedResponses[i].data(), m_pipelinedResponses[i].size());
+			
+	m_pipelinedRequestCount = 0;
+	m_pipelinedResponseCount = 0;
+
+	m_requestBuffer.seekRead(m_bytesConsumedInPipeline);
+	m_bytesConsumedInPipeline = 0;
+
+	m_pipelineReadingComplete = false;
+
+	TryWrite();
+
+	if (m_invalidProtocolError) [[unlikely]]
+	{
+		CloseConnection();
+		return;
+	}
+
+	if (CheckResponseBufferLimits())
+		DoRead();
+}
+
 
 void Connection::TryWrite()
 {

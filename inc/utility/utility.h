@@ -85,7 +85,7 @@ public:
 	}
 
 
-	InlineVector(InlineVector&& other)
+	InlineVector(InlineVector&& other) noexcept
 	{
 		if (this == &other)
 			return;
@@ -106,7 +106,7 @@ public:
 		other.m_heap = nullptr;
 	}
 
-	InlineVector& operator=(InlineVector&& other)
+	InlineVector& operator=(InlineVector&& other) noexcept
 	{
 		if (this == &other)
 			return *this;
@@ -229,6 +229,39 @@ struct CommandRequest {
 		arguments.clear();
 	}
 };
+
+
+class InlineReponseBuffer {
+
+private:
+	constexpr static int kInlineCapacity = 128;
+
+	char m_inlineBuffer[kInlineCapacity] = {0};
+	std::vector<char> m_heapBuffer;
+	uint64_t m_size = 0;
+
+public:
+
+	InlineReponseBuffer() = default;
+
+	InlineReponseBuffer(const char* data, uint64_t size);
+
+	~InlineReponseBuffer() = default;
+
+	InlineReponseBuffer(InlineReponseBuffer&& other) noexcept;
+
+	InlineReponseBuffer& operator=(InlineReponseBuffer&& other) noexcept;
+
+	void assign(const char* data, uint64_t size);
+
+	const char* data() const { return m_size <= kInlineCapacity ? m_inlineBuffer : m_heapBuffer.data(); }
+
+	uint64_t size() const { return m_size; }
+
+	InlineReponseBuffer(const InlineReponseBuffer& other) = delete;
+	InlineReponseBuffer& operator=(const InlineReponseBuffer& other) = delete;
+};
+
 
 
 class RandomGenerator {

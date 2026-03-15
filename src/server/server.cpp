@@ -6,19 +6,41 @@
 
 
 Server::Server(asio::io_context& io, Config& config) : m_config(config), 
-														m_acceptor(io, tcp::endpoint(asio::ip::make_address(config.bind), config.port)), 
-														m_maintenanceTimer(io),
-														m_database(config.maxMemoryUsage)		
+														m_acceptor(io, tcp::endpoint(asio::ip::make_address(config.bind), config.port))
 {
 	m_config = config;
-	registerCommands(m_dispatcher);
+
+	RandomGenerator randomGen;
+	m_routingHashSeed = randomGen.getRandomInteger(1, std::numeric_limits<long long>::max());
+
+	m_Shards = std::thread::hardware_concurrency();
+	m_shardPool.reserve(m_Shards);
+
+	for (int i = 0; i < m_Shards; ++i)
+		m_shardPool.emplace_back(std::make_unique<Shard>(i, m_config, m_routingHashSeed, m_shardPool));
 }
+
+Server::~Server()
+{
+	Stop();
+}
+
 
 void Server::Start()
 {
 	std::cout << "Server started, waiting for connections..." << std::endl;
+
+	for(int i = 0; i < m_Shards; ++i)
+		m_shardPool[i]->Start();
+
 	DoAccept();
-	RunMaintenanceLoop();
+}
+
+
+void Server::Stop()
+{
+	for (int i = 0; i < m_Shards; ++i)
+		m_shardPool[i]->Stop();
 }
 
 
@@ -28,9 +50,8 @@ void Server::DoAccept()
 		[this](asio::error_code errorCode, tcp::socket socket) {
 			if (!errorCode)
 			{
-				asio::ip::tcp::no_delay option(true);
-				socket.set_option(option);
-				std::make_shared<Connection>(std::move(socket), m_dispatcher, m_database)->Start();
+				int shardId = GetNextShard();
+				m_shardPool[shardId]->AcceptConnection(std::move(socket));
 			}
 			else
 			{
@@ -41,17 +62,9 @@ void Server::DoAccept()
 	);
 }
 
-void Server::RunMaintenanceLoop()
-{
-	m_maintenanceTimer.expires_after(std::chrono::milliseconds(m_config.maintenanceIntervalMs));
-	m_maintenanceTimer.async_wait([this](const asio::error_code& ec)
-		{
-			if (!ec)
-			{
-				m_database.runMaintenance();
-				RunMaintenanceLoop();
-			}
-		}
-	
-	);
+
+int Server::GetNextShard() {
+	int shardId = m_nextShard;
+	m_nextShard = (m_nextShard + 1) % m_Shards;
+	return shardId;
 }
