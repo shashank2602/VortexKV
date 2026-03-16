@@ -1,6 +1,6 @@
 #include "utility.h"
 
-
+#include <cstring>
 
 
 RandomGenerator::RandomGenerator() : m_gen(std::random_device{}()) {}
