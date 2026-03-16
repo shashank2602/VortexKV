@@ -19,7 +19,7 @@ int64_t RandomGenerator::getRandomInteger(int64_t min, int64_t max)
 }
 
 
-InlineReponseBuffer::InlineReponseBuffer(const char* data, uint64_t size)
+InlineResponseBuffer::InlineResponseBuffer(const char* data, uint64_t size)
 {
 	m_size = size;
 	if (size <= kInlineCapacity)
@@ -29,7 +29,7 @@ InlineReponseBuffer::InlineReponseBuffer(const char* data, uint64_t size)
 	
 }
 
-void InlineReponseBuffer::assign(const char* data, uint64_t size) {
+void InlineResponseBuffer::assign(const char* data, uint64_t size) {
 	m_size = size;
 	if (size <= kInlineCapacity)
 		std::memcpy(m_inlineBuffer, data, size);
@@ -38,7 +38,7 @@ void InlineReponseBuffer::assign(const char* data, uint64_t size) {
 }
 
 
-InlineReponseBuffer::InlineReponseBuffer(InlineReponseBuffer&& other) noexcept
+InlineResponseBuffer::InlineResponseBuffer(InlineResponseBuffer&& other) noexcept
 {
 	if (this == &other)
 		return;
@@ -51,7 +51,7 @@ InlineReponseBuffer::InlineReponseBuffer(InlineReponseBuffer&& other) noexcept
 	other.m_size = 0;
 }
 
-InlineReponseBuffer& InlineReponseBuffer::operator=(InlineReponseBuffer&& other) noexcept 
+InlineResponseBuffer& InlineResponseBuffer::operator=(InlineResponseBuffer&& other) noexcept
 {
 	if(this == &other)
 		return *this;
@@ -64,4 +64,22 @@ InlineReponseBuffer& InlineReponseBuffer::operator=(InlineReponseBuffer&& other)
 	other.m_size = 0;
 
 	return *this;
+}
+
+
+
+void PinThreadToCore(std::jthread& thread, int coreId)
+{
+#if defined(_WIN32) || defined(_WIN64)
+	// Windows
+	HANDLE threadHandle = reinterpret_cast<HANDLE>(thread.native_handle());
+	DWORD_PTR mask = 1ULL << coreId;
+	SetThreadAffinityMask(threadHandle, mask);
+#else
+	// Linux and other Unix-like systems
+	cpu_set_t cpuset;
+	CPU_ZERO(&cpuset);
+	CPU_SET(coreId, &cpuset);
+	pthread_setaffinity_np(thread.native_handle(), sizeof(cpu_set_t), &cpuset);
+#endif
 }

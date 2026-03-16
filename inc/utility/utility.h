@@ -10,6 +10,7 @@
 #include <charconv>
 #include <format>
 #include <span>
+#include <thread>
 
 
 enum class ParseStatus : std::uint8_t {
@@ -231,7 +232,7 @@ struct CommandRequest {
 };
 
 
-class InlineReponseBuffer {
+class InlineResponseBuffer {
 
 private:
 	constexpr static int kInlineCapacity = 128;
@@ -242,15 +243,15 @@ private:
 
 public:
 
-	InlineReponseBuffer() = default;
+	InlineResponseBuffer() = default;
 
-	InlineReponseBuffer(const char* data, uint64_t size);
+	InlineResponseBuffer(const char* data, uint64_t size);
 
-	~InlineReponseBuffer() = default;
+	~InlineResponseBuffer() = default;
 
-	InlineReponseBuffer(InlineReponseBuffer&& other) noexcept;
+	InlineResponseBuffer(InlineResponseBuffer&& other) noexcept;
 
-	InlineReponseBuffer& operator=(InlineReponseBuffer&& other) noexcept;
+	InlineResponseBuffer& operator=(InlineResponseBuffer&& other) noexcept;
 
 	void assign(const char* data, uint64_t size);
 
@@ -258,8 +259,8 @@ public:
 
 	uint64_t size() const { return m_size; }
 
-	InlineReponseBuffer(const InlineReponseBuffer& other) = delete;
-	InlineReponseBuffer& operator=(const InlineReponseBuffer& other) = delete;
+	InlineResponseBuffer(const InlineResponseBuffer& other) = delete;
+	InlineResponseBuffer& operator=(const InlineResponseBuffer& other) = delete;
 };
 
 
@@ -306,6 +307,9 @@ inline bool strict_integer_parse(std::string_view str, long long& value)
 	return result.ec == std::errc() && result.ptr == str.data() + str.size();
 }
 
+void PinThreadToCore(std::jthread& thread, int coreId);
+
+
 // Cross-platform prefetch support
 #if defined(_MSC_VER)
 #include <xmmintrin.h>
@@ -326,4 +330,14 @@ inline bool strict_integer_parse(std::string_view str, long long& value)
 #define PREFETCH_L2 0
 #define PREFETCH_L3 0
 #define PREFETCH_NTA 0
+#endif
+
+
+// Cross-platform thread affinity headers
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#else
+// Linux and other Unix-like systems
+#include <pthread.h>
+#include <sched.h>
 #endif

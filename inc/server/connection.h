@@ -53,11 +53,11 @@ private:
 
 	//struct PipelinedResponse
 	//{
-	//	InlineReponseBuffer responseBuffer;
+	//	InlineResponseBuffer responseBuffer;
 	//	bool isReadyToWrite = false;
 	//};
 
-	std::vector<InlineReponseBuffer> m_pipelinedResponses;
+	std::vector<InlineResponseBuffer> m_pipelinedResponses;
 
 	int m_pipelinedRequestCount = 0;
 	int m_pipelinedResponseCount = 0;

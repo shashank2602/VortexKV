@@ -4,7 +4,8 @@
 
 #include <memory>
 
-Shard::Shard(int id, Config& config, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool) : m_id(id), m_config(config), 
+
+Shard::Shard(int id, Config& config, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool) : m_id(id), m_config(config),
 										m_database(config.maxMemoryUsage),	m_maintenanceTimer(m_ioContext), m_workGuard(asio::make_work_guard(m_ioContext)),
 										m_routingHashSeed(routingHashSeed), m_shardPool(shardPool)						
 {
@@ -16,6 +17,8 @@ void Shard::Start()
 {
 	std::cout << "Shard " << m_id << " started." << std::endl;
 	m_thread = std::jthread([this]() { Run(); });
+
+	PinThreadToCore(m_thread, m_id % static_cast<int>(std::thread::hardware_concurrency()));
 }
 
 Shard::~Shard()
@@ -45,7 +48,7 @@ void Shard::ExecuteRemote(CommandRequest request, asio::io_context& callerContex
 			thread_local LinearBuffer localResponseBuffer(256);
 			localResponseBuffer.reset();
 			m_dispatcher.dispatch(request, m_database, localResponseBuffer);
-			InlineReponseBuffer responseBuffer(localResponseBuffer.readPtr(), localResponseBuffer.size());
+			InlineResponseBuffer responseBuffer(localResponseBuffer.readPtr(), localResponseBuffer.size());
 
 			asio::post(callerContext, 
 				[responseBuffer = std::move(responseBuffer), completionCallback = std::move(completionCallback)]() mutable {

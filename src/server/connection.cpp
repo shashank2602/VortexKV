@@ -116,7 +116,7 @@ void Connection::RouteRequest(int requestIndex, CommandRequest& request)
 	{
 		auto self = shared_from_this();
 		m_shardPool[targetShardId]->ExecuteRemote(std::move(request), m_ownerShard.GetIOContext(),
-			[self, this, requestIndex](InlineReponseBuffer responseBuffer) {
+			[self, this, requestIndex](InlineResponseBuffer responseBuffer) {
 
 				m_pipelinedResponses[requestIndex] = std::move(responseBuffer);
 				m_pipelinedResponseCount++;
