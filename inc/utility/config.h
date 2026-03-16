@@ -5,12 +5,14 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 
 
 struct Config {
 
     uint16_t port = 8080;
     std::string bind = "0.0.0.0";
+	int shardCount = std::thread::hardware_concurrency();
     int maintenanceIntervalMs = 100;
     uint64_t maxMemoryUsage = 2ULL * 1024 * 1024 * 1024; // 2 GB 
 
@@ -98,6 +100,14 @@ struct Config {
                     else if (key == "max_memory_usage")
                     {
                         config.maxMemoryUsage = std::stoull(value);
+                    }
+                    else if (key == "shards")
+                    {
+                        int shardVal = std::stoi(value);
+                        if (shardVal < 1 || shardVal > std::thread::hardware_concurrency())
+                            std::cerr << "Warning: invalid shard count, can be between 1 and " << std::thread::hardware_concurrency() << std::endl;
+                        else
+                            config.shardCount = static_cast<uint32_t>(shardVal);
                     }
                     else
                     {
