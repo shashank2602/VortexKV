@@ -13,7 +13,7 @@ Server::Server(asio::io_context& io, Config& config) : m_config(config),
 	RandomGenerator randomGen;
 	m_routingHashSeed = randomGen.getRandomInteger(1, std::numeric_limits<long long>::max());
 
-	m_Shards = std::thread::hardware_concurrency();
+	m_Shards = config.shardCount;
 	m_shardPool.reserve(m_Shards);
 
 	for (int i = 0; i < m_Shards; ++i)
