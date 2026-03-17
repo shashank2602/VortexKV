@@ -28,6 +28,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(asio)
 
+# --- mimalloc (replace default allocator for all targets) ---
+FetchContent_Declare(
+        mimalloc
+        GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+        GIT_TAG        v2.2.7
+)
+set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(MI_BUILD_STATIC OFF  CACHE BOOL "" FORCE)
+set(MI_BUILD_OBJECT ON  CACHE BOOL "" FORCE)
+set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
+set(MI_OVERRIDE     ON  CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(mimalloc)
+set_target_properties(mimalloc-obj
+        PROPERTIES FOLDER "Third Party/mimalloc"
+)
+
+
 # --- Google Test & Google Benchmark (optional) ---
 if(BUILD_EXTRAS)
     FetchContent_Declare(
@@ -125,6 +142,7 @@ target_include_directories(RapidKV PRIVATE
 )
 
 target_link_libraries(RapidKV PRIVATE
+        mimalloc-obj
     RapidKV_Commands
     RapidKV_Protocol
     RapidKV_Storage

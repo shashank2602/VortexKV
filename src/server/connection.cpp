@@ -31,6 +31,7 @@ void Connection::DoRead()
 	auto self = shared_from_this();
 	m_socket.async_read_some(
 		asio::buffer(m_requestBuffer.writePtr(), m_requestBuffer.remainingWriteSize()),
+		asio::bind_allocator(asio::recycling_allocator<void>(),
 		[this, self](asio::error_code errorCode, std::size_t bytesRead){
 			
 			if (errorCode)
@@ -80,7 +81,7 @@ void Connection::DoRead()
 			m_pipelineReadingComplete = true;
 			if(m_pipelinedRequestCount == m_pipelinedResponseCount)
 				FlushPipelinedResponses();
-		}
+		})
 	);
 }
 
@@ -168,7 +169,9 @@ void Connection::TryWrite()
 
 	auto self = shared_from_this();
 
-	asio::async_write(m_socket, asio::buffer(m_pPrimaryResponseBuffer->readPtr(), m_pPrimaryResponseBuffer->size()), 
+	asio::async_write(
+		m_socket, asio::buffer(m_pPrimaryResponseBuffer->readPtr(), m_pPrimaryResponseBuffer->size()),
+		asio::bind_allocator(asio::recycling_allocator<void>(),
 		
 		[this, self](asio::error_code errorCode, std::size_t bytesWritten){
 			
@@ -183,7 +186,7 @@ void Connection::TryWrite()
 				CloseConnection();
 			}
 		
-		}
+		})
 	);
 }
 
