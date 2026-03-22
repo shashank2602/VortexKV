@@ -6,7 +6,7 @@
 
 
 Shard::Shard(int id, Config& config, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool) : m_id(id), m_config(config),
-										m_database(config.maxMemoryUsage),	m_maintenanceTimer(m_ioContext), m_workGuard(asio::make_work_guard(m_ioContext)),
+										m_database(config.maxMemoryUsage/config.shardCount),	m_maintenanceTimer(m_ioContext), m_workGuard(asio::make_work_guard(m_ioContext)),
 										m_routingHashSeed(routingHashSeed), m_shardPool(shardPool)						
 {
 	registerCommands(m_dispatcher);
