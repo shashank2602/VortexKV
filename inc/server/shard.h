@@ -47,7 +47,20 @@ public:
 
 	using CompletionCallback = std::function<void()>;
 
-	void ExecuteRemote(CommandRequest request, LinearBuffer& responseBuffer, asio::io_context& callerContext, CompletionCallback completionCallback);
+	template <typename Callback>
+	void ExecuteRemote(CommandRequest request, LinearBuffer& responseBuffer, asio::io_context& callerContext, Callback completionCallback)
+	{
+		asio::post(m_ioContext,
+			[this, request = std::move(request), &responseBuffer, &callerContext, completionCallback = std::forward<Callback>(completionCallback)]() mutable {
+
+				responseBuffer.reset();
+				m_dispatcher.dispatch(request, m_database, responseBuffer);
+
+				asio::post(callerContext, std::move(completionCallback));
+			}
+
+		);
+	}
 
 	asio::io_context& GetIOContext() { return m_ioContext; }
 
