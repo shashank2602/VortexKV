@@ -7,8 +7,8 @@
 Connection::Connection(tcp::socket socket, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool, int shardId) :
 																	m_socket(std::move(socket)), m_ownerShard(*shardPool[shardId]),
 																	m_dispatcher(m_ownerShard.GetDispatcher()), m_database(m_ownerShard.GetDatabase()),
-																	m_pPrimaryResponseBuffer(std::make_unique<LinearBuffer>()),
-																	m_pSecondaryResponseBuffer(std::make_unique<LinearBuffer>()),
+																	m_pPrimaryResponseBuffer(&m_primaryResponseBuffer),
+																	m_pSecondaryResponseBuffer(&m_secondaryResponseBuffer),
 																	m_writingInProgress(false), m_routingHashSeed(routingHashSeed), m_shardPool(shardPool),
 																	m_shardId(shardId), m_pipelinedRequests(16), m_fastModDivisor(shardPool.size())
 {

@@ -42,7 +42,8 @@ private:
 
 	tcp::socket m_socket;
 	LinearBuffer m_requestBuffer;
-	std::unique_ptr<LinearBuffer> m_pPrimaryResponseBuffer, m_pSecondaryResponseBuffer;
+	LinearBuffer m_primaryResponseBuffer, m_secondaryResponseBuffer;
+	LinearBuffer *m_pPrimaryResponseBuffer = nullptr, *m_pSecondaryResponseBuffer = nullptr;
 	bool m_writingInProgress;
 
 	uint64_t m_routingHashSeed = 0;
