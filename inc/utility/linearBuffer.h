@@ -12,8 +12,6 @@ public:
 
 	LinearBuffer(size_t initialSize = linearBufferDefaultSize);
 
-	~LinearBuffer();
-
 	void append(const char* data, size_t size);
 
 	void seekWrite(size_t size);

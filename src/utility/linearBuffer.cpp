@@ -9,11 +9,6 @@ LinearBuffer::LinearBuffer(size_t initialSize)
 	m_tail = 0;
 }
 
-LinearBuffer::~LinearBuffer()
-{
-
-}
-
 
 void LinearBuffer::append(const char* data, size_t size)
 {

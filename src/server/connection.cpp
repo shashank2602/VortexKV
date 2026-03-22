@@ -10,8 +10,11 @@ Connection::Connection(tcp::socket socket, uint64_t routingHashSeed, std::vector
 																	m_pPrimaryResponseBuffer(std::make_unique<LinearBuffer>()),
 																	m_pSecondaryResponseBuffer(std::make_unique<LinearBuffer>()),
 																	m_writingInProgress(false), m_routingHashSeed(routingHashSeed), m_shardPool(shardPool),
-																	m_shardId(shardId), m_pipelinedResponses(16)	
+																	m_shardId(shardId), m_pipelinedRequests(16)
 {
+	m_pipelinedResponses.reserve(16);
+	for (int i = 0 ; i < m_pipelinedResponses.capacity() ; i++)
+		m_pipelinedResponses.emplace_back(128);
 	//std::cout << "New connection accepted." << std::endl;
 }
 
@@ -42,17 +45,16 @@ void Connection::DoRead()
 
 			m_requestBuffer.seekWrite(bytesRead);
 
-			//constexpr int pipelineSize = 16;
-			CommandRequest commandRequest;
-
-
 			while (true)
-			{	
-				commandRequest.reset();
+			{
+				if (m_pipelinedRequestCount >= m_pipelinedRequests.size())
+					m_pipelinedRequests.resize(m_pipelinedRequests.size() * 2);
+
+				m_pipelinedRequests[m_pipelinedRequestCount].reset();
 				
 				std::string_view currentDataView = m_requestBuffer.getView();
 
-				auto [parseStatus, bytesConsumed] = RESPParser::parse(currentDataView.substr(m_bytesConsumedInPipeline), commandRequest);
+				auto [parseStatus, bytesConsumed] = RESPParser::parse(currentDataView.substr(m_bytesConsumedInPipeline), m_pipelinedRequests[m_pipelinedRequestCount]);
 
 				if (parseStatus == ParseStatus::Success)
 				{
@@ -74,13 +76,22 @@ void Connection::DoRead()
 
 				m_bytesConsumedInPipeline += bytesConsumed;
 				m_pipelinedRequestCount++;
-				
-				RouteRequest(m_pipelinedRequestCount - 1, commandRequest);
 			}
-			
+
+			if(m_pipelinedRequestCount > m_pipelinedResponses.size())
+			{
+				m_pipelinedResponses.reserve(m_pipelinedRequestCount);
+				while (m_pipelinedResponses.size() < m_pipelinedRequestCount)
+					m_pipelinedResponses.emplace_back(128);
+			}
+
+
+			for (int i = 0; i < m_pipelinedRequestCount; ++i)
+				RouteRequest(i, m_pipelinedRequests[i]);
+
 			m_pipelineReadingComplete = true;
-			if(m_pipelinedRequestCount == m_pipelinedResponseCount)
-				FlushPipelinedResponses();
+			 if(m_pipelinedRequestCount == m_pipelinedResponseCount)
+			 	FlushPipelinedResponses();
 		})
 	);
 }
@@ -102,26 +113,19 @@ void Connection::RouteRequest(int requestIndex, CommandRequest& request)
 
 	//std::cout<<"Owner shard: " << m_shardId << ", Target shard: " << targetShardId << std::endl;
 
-	if(requestIndex >= m_pipelinedResponses.size())
-		m_pipelinedResponses.resize(m_pipelinedResponses.size() * 2);
-
 	if (targetShardId == m_shardId)
 	{
-		thread_local LinearBuffer localResponseBuffer(256);
-		localResponseBuffer.reset();
-		m_dispatcher.dispatch(request, m_database, localResponseBuffer);
-		m_pipelinedResponses[requestIndex].assign(localResponseBuffer.readPtr(), localResponseBuffer.size());
+		m_pipelinedResponses[requestIndex].reset();
+		m_dispatcher.dispatch(request, m_database, m_pipelinedResponses[requestIndex]);
 		m_pipelinedResponseCount++;
 	}
 	else
 	{
 		auto self = shared_from_this();
-		m_shardPool[targetShardId]->ExecuteRemote(std::move(request), m_ownerShard.GetIOContext(),
-			[self, this, requestIndex](InlineResponseBuffer responseBuffer) {
+		m_shardPool[targetShardId]->ExecuteRemote(std::move(request), m_pipelinedResponses[requestIndex], m_ownerShard.GetIOContext(),
+			[self, this]() {
 
-				m_pipelinedResponses[requestIndex] = std::move(responseBuffer);
 				m_pipelinedResponseCount++;
-				
 				if(m_pipelineReadingComplete && m_pipelinedRequestCount == m_pipelinedResponseCount)
 					FlushPipelinedResponses();
 			}
@@ -134,7 +138,7 @@ void Connection::RouteRequest(int requestIndex, CommandRequest& request)
 void Connection::FlushPipelinedResponses()
 {
 	for(int i = 0; i < m_pipelinedRequestCount; ++i)
-		m_pSecondaryResponseBuffer->append(m_pipelinedResponses[i].data(), m_pipelinedResponses[i].size());
+		m_pSecondaryResponseBuffer->append(m_pipelinedResponses[i].readPtr(), m_pipelinedResponses[i].size());
 			
 	m_pipelinedRequestCount = 0;
 	m_pipelinedResponseCount = 0;

@@ -40,21 +40,18 @@ void Shard::AcceptConnection(tcp::socket socket)
 	});
 }
 
-void Shard::ExecuteRemote(CommandRequest request, asio::io_context& callerContext, CompletionCallback completionCallback)
+void Shard::ExecuteRemote(CommandRequest request, LinearBuffer& responseBuffer, asio::io_context& callerContext, CompletionCallback completionCallback)
 {
 	asio::post(m_ioContext, 
-		[this, request = std::move(request), &callerContext, completionCallback = std::move(completionCallback)]() mutable {
-			
-			thread_local LinearBuffer localResponseBuffer(256);
-			localResponseBuffer.reset();
-			m_dispatcher.dispatch(request, m_database, localResponseBuffer);
-			InlineResponseBuffer responseBuffer(localResponseBuffer.readPtr(), localResponseBuffer.size());
+		[this, request = std::move(request), &responseBuffer, &callerContext, completionCallback = std::move(completionCallback)]() mutable {
+
+			responseBuffer.reset();
+			m_dispatcher.dispatch(request, m_database, responseBuffer);
 
 			asio::post(callerContext, 
-				[responseBuffer = std::move(responseBuffer), completionCallback = std::move(completionCallback)]() mutable {
-					completionCallback(std::move(responseBuffer));
-			}	
-
+				[completionCallback = std::move(completionCallback)]() mutable {
+					completionCallback();
+			}
 			);
 		}
 

@@ -51,20 +51,13 @@ private:
 	CommandDispatcher& m_dispatcher;
 	Database& m_database;
 
-	//struct PipelinedResponse
-	//{
-	//	InlineResponseBuffer responseBuffer;
-	//	bool isReadyToWrite = false;
-	//};
-
-	std::vector<InlineResponseBuffer> m_pipelinedResponses;
-
 	int m_pipelinedRequestCount = 0;
 	int m_pipelinedResponseCount = 0;
 	uint64_t m_bytesConsumedInPipeline = 0;
 	bool m_invalidProtocolError = false;
 	bool m_pipelineReadingComplete = false;
-
+	std::vector<CommandRequest> m_pipelinedRequests;
+	std::vector<LinearBuffer> m_pipelinedResponses;
 
 	static const std::size_t kHardOutputLimit = 8 * 1024 * 1024;   // 8 MB
 };

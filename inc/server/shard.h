@@ -45,9 +45,9 @@ public:
 
 	void Stop();
 
-	using CompletionCallback = std::function<void(InlineResponseBuffer responseBuffer)>;
+	using CompletionCallback = std::function<void()>;
 
-	void ExecuteRemote(CommandRequest request, asio::io_context& callerContext, CompletionCallback completionCallback);
+	void ExecuteRemote(CommandRequest request, LinearBuffer& responseBuffer, asio::io_context& callerContext, CompletionCallback completionCallback);
 
 	asio::io_context& GetIOContext() { return m_ioContext; }
 
