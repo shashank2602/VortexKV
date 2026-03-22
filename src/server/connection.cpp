@@ -10,7 +10,7 @@ Connection::Connection(tcp::socket socket, uint64_t routingHashSeed, std::vector
 																	m_pPrimaryResponseBuffer(std::make_unique<LinearBuffer>()),
 																	m_pSecondaryResponseBuffer(std::make_unique<LinearBuffer>()),
 																	m_writingInProgress(false), m_routingHashSeed(routingHashSeed), m_shardPool(shardPool),
-																	m_shardId(shardId), m_pipelinedRequests(16)
+																	m_shardId(shardId), m_pipelinedRequests(16), m_fastModDivisor(shardPool.size())
 {
 	m_pipelinedResponses.reserve(16);
 	for (int i = 0 ; i < m_pipelinedResponses.capacity() ; i++)
@@ -108,7 +108,8 @@ void Connection::RouteRequest(int requestIndex, CommandRequest& request)
 	else
 	{
 		uint64_t hash = rapidhash_withSeed(request.arguments[0].data(), request.arguments[0].size(), m_routingHashSeed);
-		targetShardId = hash % m_shardPool.size();
+		uint64_t quotient = hash / m_fastModDivisor;
+		targetShardId = hash - (quotient * m_shardPool.size());
 	}
 
 	//std::cout<<"Owner shard: " << m_shardId << ", Target shard: " << targetShardId << std::endl;

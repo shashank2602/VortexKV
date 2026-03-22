@@ -138,6 +138,7 @@ add_executable(RapidKV
 
 target_include_directories(RapidKV PRIVATE
     ${asio_SOURCE_DIR}/asio/include
+    external/libdivide/inc
     inc/server
 )
 

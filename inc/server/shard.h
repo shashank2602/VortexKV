@@ -45,8 +45,6 @@ public:
 
 	void Stop();
 
-	using CompletionCallback = std::function<void()>;
-
 	template <typename Callback>
 	void ExecuteRemote(CommandRequest request, LinearBuffer& responseBuffer, asio::io_context& callerContext, Callback completionCallback)
 	{

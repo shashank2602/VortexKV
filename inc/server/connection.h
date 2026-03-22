@@ -5,6 +5,7 @@
 #include "respParser.h"
 #include "commands.h"
 #include "database.h"
+#include "libdivide.h"
 
 #include <vector>
 #include <memory>
@@ -58,6 +59,8 @@ private:
 	bool m_pipelineReadingComplete = false;
 	std::vector<CommandRequest> m_pipelinedRequests;
 	std::vector<LinearBuffer> m_pipelinedResponses;
+
+	libdivide::divider<uint64_t> m_fastModDivisor;
 
 	static const std::size_t kHardOutputLimit = 8 * 1024 * 1024;   // 8 MB
 };
