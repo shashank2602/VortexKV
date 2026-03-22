@@ -14,7 +14,7 @@ struct Config {
     std::string bind = "0.0.0.0";
 	int shardCount = std::thread::hardware_concurrency();
     int maintenanceIntervalMs = 100;
-    uint64_t maxMemoryUsage = 2ULL * 1024 * 1024 * 1024; // 2 GB 
+    uint64_t maxMemoryUsage = 8ULL * 1024 * 1024 * 1024; // 8 GB
 
     static Config loadFromFile(const std::string& path)
     {
