@@ -81,41 +81,39 @@ DBResult Database::GET(std::string_view key)
 }
 
 
-DBResult Database::DEL(std::span<const std::string_view> keys)
+DBResult Database::DEL(std::string_view key)
 {
 	int64_t deletedCount = 0;
-	for (auto key : keys)
-	{
-		uint32_t hash = m_storage.calculateHash(key.data(), key.size());
-		auto entryPtr = m_storage.find(key, hash);
-		bool keyExpired = entryPtr && entryPtr->isExpired(m_currentTimeInMillis);
 
-		if (entryPtr && m_storage.remove(key, hash) && !keyExpired)
-			deletedCount++;
-	}
+	uint32_t hash = m_storage.calculateHash(key.data(), key.size());
+	auto entryPtr = m_storage.find(key, hash);
+	bool keyExpired = entryPtr && entryPtr->isExpired(m_currentTimeInMillis);
+
+	if (entryPtr && m_storage.remove(key, hash) && !keyExpired)
+		deletedCount++;
+
 	return DBResult(DatabaseError::SUCCESS, deletedCount);
 }
 
 
-DBResult Database::EXISTS(std::span<const std::string_view> keys)
+DBResult Database::EXISTS(std::string_view key)
 {
 	int64_t existsCount = 0;
-	for (auto key : keys)
+
+	uint32_t hash = m_storage.calculateHash(key.data(), key.size());
+	auto entryPtr = m_storage.find(key, hash);
+
+	if (entryPtr == nullptr)
+		return DBResult(DatabaseError::SUCCESS, existsCount);
+
+	if (entryPtr->isExpired(m_currentTimeInMillis))
 	{
-		uint32_t hash = m_storage.calculateHash(key.data(), key.size());
-		auto entryPtr = m_storage.find(key, hash);
-
-		if (entryPtr == nullptr)
-			continue;
-
-		if (entryPtr->isExpired(m_currentTimeInMillis))
-		{
-			m_storage.remove(key, hash);
-			continue;
-		}
-
-		existsCount++;
+		m_storage.remove(key, hash);
+		return DBResult(DatabaseError::SUCCESS, existsCount);
 	}
+
+	existsCount++;
+
 	return DBResult(DatabaseError::SUCCESS, existsCount);
 }
 

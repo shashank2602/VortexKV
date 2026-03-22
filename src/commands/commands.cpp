@@ -67,7 +67,7 @@ void handler_GET(CommandRequest& command, Database& db, LinearBuffer& responseBu
 
 void handler_DEL(CommandRequest& command, Database& db, LinearBuffer& responseBuffer)
 {
-	auto deletedCount = db.DEL(command.arguments);
+	auto deletedCount = db.DEL(command.arguments[0]);
 	if(deletedCount.error == DatabaseError::SUCCESS)
 		RESPWriter::writeInteger(deletedCount.str(), responseBuffer);
 	else
@@ -76,7 +76,7 @@ void handler_DEL(CommandRequest& command, Database& db, LinearBuffer& responseBu
 
 void handler_EXISTS(CommandRequest& command, Database& db, LinearBuffer& responseBuffer)
 {
-	auto existsCount = db.EXISTS(command.arguments);
+	auto existsCount = db.EXISTS(command.arguments[0]);
 	if (existsCount.error == DatabaseError::SUCCESS)
 		RESPWriter::writeInteger(existsCount.str(), responseBuffer);
 	else

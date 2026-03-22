@@ -79,9 +79,9 @@ public:
 
 	DBResult GET(std::string_view key);
 
-	DBResult DEL(std::span<const std::string_view> keys);
+	DBResult DEL(std::string_view key);
 
-	DBResult EXISTS(std::span<const std::string_view> keys);
+	DBResult EXISTS(std::string_view key);
 
 	DBResult INCR(std::string_view key);
 
