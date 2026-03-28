@@ -73,7 +73,7 @@ TEST_F(DatabaseTest, SetMultipleKeys) {
 // ============================================================================
 TEST_F(DatabaseTest, DeleteExistingKey) {
     db.SET("key", "value");
-    auto result = db.DEL(std::vector<std::string_view>{"key"});
+    auto result = db.DEL("key");
 
     EXPECT_EQ(result.error, DatabaseError::SUCCESS);
     EXPECT_EQ(result.str(), "1");
@@ -81,50 +81,29 @@ TEST_F(DatabaseTest, DeleteExistingKey) {
 }
 
 TEST_F(DatabaseTest, DeleteNonExistentKey) {
-    auto result = db.DEL(std::vector<std::string_view>{"nonexistent"});
+    auto result = db.DEL("nonexistent");
     EXPECT_EQ(result.error, DatabaseError::SUCCESS);
     EXPECT_EQ(result.str(), "0");
 }
 
-TEST_F(DatabaseTest, DeleteMultipleKeys) {
-    db.SET("key1", "value1");
-    db.SET("key2", "value2");
-    db.SET("key3", "value3");
-
-    auto result = db.DEL(std::vector<std::string_view>{"key1", "key2", "nonexistent"});
-    EXPECT_EQ(result.error, DatabaseError::SUCCESS);
-    EXPECT_EQ(result.str(), "2");
-
-    EXPECT_EQ(db.GET("key1").error, DatabaseError::KEY_NOT_FOUND);
-    EXPECT_EQ(db.GET("key2").error, DatabaseError::KEY_NOT_FOUND);
-    EXPECT_EQ(db.GET("key3").error, DatabaseError::SUCCESS);
-}
 
 // ============================================================================
 // EXISTS Tests
 // ============================================================================
 TEST_F(DatabaseTest, ExistsForExistingKey) {
     db.SET("key", "value");
-    auto result = db.EXISTS(std::vector<std::string_view>{"key"});
+    auto result = db.EXISTS("key");
 
     EXPECT_EQ(result.error, DatabaseError::SUCCESS);
     EXPECT_EQ(result.str(), "1");
 }
 
 TEST_F(DatabaseTest, ExistsForNonExistentKey) {
-    auto result = db.EXISTS(std::vector<std::string_view>{"nonexistent"});
+    auto result = db.EXISTS("nonexistent");
     EXPECT_EQ(result.error, DatabaseError::SUCCESS);
     EXPECT_EQ(result.str(), "0");
 }
 
-TEST_F(DatabaseTest, ExistsForMultipleKeys) {
-    db.SET("key1", "value1");
-    db.SET("key2", "value2");
-
-    auto result = db.EXISTS(std::vector<std::string_view>{"key1", "key2", "nonexistent"});
-    EXPECT_EQ(result.error, DatabaseError::SUCCESS);
-    EXPECT_EQ(result.str(), "2");
-}
 
 // ============================================================================
 // INCR/DECR Tests

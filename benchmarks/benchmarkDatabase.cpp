@@ -217,7 +217,7 @@ static void BM_Database_GET_Miss(benchmark::State& state) {
 // ----------------------------------------------------------------------------
 // DEL Benchmarks
 // ----------------------------------------------------------------------------
-static void BM_Database_DEL_Single(benchmark::State& state) {
+static void BM_Database_DEL(benchmark::State& state) {
     const size_t size = state.range(0);
     auto keys = generateRandomKeys(size);
 
@@ -231,38 +231,9 @@ static void BM_Database_DEL_Single(benchmark::State& state) {
         state.ResumeTiming();
 
         for (const auto& key : keys) {
-            auto result = db->DEL(std::vector<std::string_view>{key});
+            auto result = db->DEL(key);
             benchmark::DoNotOptimize(result);
         }
-
-        state.PauseTiming();
-        db.reset();
-        state.ResumeTiming();
-    }
-    ReportStats(state, size);
-}
-
-static void BM_Database_DEL_Batch(benchmark::State& state) {
-    const size_t size = state.range(0);
-    auto keys = generateRandomKeys(size);
-
-    std::vector<std::string_view> keyViews;
-    keyViews.reserve(size);
-    for (const auto& key : keys) {
-        keyViews.push_back(key);
-    }
-
-    std::optional<Database> db;
-    for (auto _ : state) {
-        state.PauseTiming();
-        db.emplace();
-        for (size_t i = 0; i < size; ++i) {
-            db->SET(keys[i], "value");
-        }
-        state.ResumeTiming();
-
-        auto result = db->DEL(keyViews);
-        benchmark::DoNotOptimize(result);
 
         state.PauseTiming();
         db.reset();
@@ -283,15 +254,11 @@ static void BM_Database_EXISTS(benchmark::State& state) {
         db.SET(keys[i], "value");
     }
 
-    std::vector<std::string_view> keyViews;
-    keyViews.reserve(size);
-    for (const auto& key : keys) {
-        keyViews.push_back(key);
-    }
-
     for (auto _ : state) {
-        auto result = db.EXISTS(keyViews);
-        benchmark::DoNotOptimize(result);
+        for (const auto& key : keys) {
+            auto result = db.EXISTS(key);
+            benchmark::DoNotOptimize(result);
+        }
     }
     ReportStats(state, size);
 }
@@ -432,7 +399,7 @@ static void BM_Database_MixedWorkload(benchmark::State& state) {
                     break;
                 }
                 case 2: {
-                    auto result = db.EXISTS(std::vector<std::string_view>{keys[i % size]});
+                    auto result = db.EXISTS(keys[i % size]);
                     benchmark::DoNotOptimize(result);
                     break;
                 }
@@ -453,8 +420,7 @@ BENCHMARK(BM_Database_SET_Integer)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)
 BENCHMARK(BM_Database_SET_WithTTL)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
 BENCHMARK(BM_Database_GET)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
 BENCHMARK(BM_Database_GET_Miss)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
-BENCHMARK(BM_Database_DEL_Single)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
-BENCHMARK(BM_Database_DEL_Batch)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
+BENCHMARK(BM_Database_DEL)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
 BENCHMARK(BM_Database_EXISTS)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
 BENCHMARK(BM_Database_INCR)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
 BENCHMARK(BM_Database_INCRBY)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000)->Arg(1000000);
