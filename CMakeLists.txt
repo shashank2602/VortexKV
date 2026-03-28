@@ -35,14 +35,25 @@ FetchContent_Declare(
         GIT_TAG        v2.2.7
 )
 set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(MI_BUILD_STATIC OFF  CACHE BOOL "" FORCE)
-set(MI_BUILD_OBJECT ON  CACHE BOOL "" FORCE)
 set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(MI_OVERRIDE     ON  CACHE BOOL "" FORCE)
+if(WIN32)
+    set(MI_BUILD_STATIC ON  CACHE BOOL "" FORCE)
+    set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+else()
+    set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+    set(MI_BUILD_OBJECT ON  CACHE BOOL "" FORCE)
+endif()
 FetchContent_MakeAvailable(mimalloc)
-set_target_properties(mimalloc-obj
-        PROPERTIES FOLDER "Third Party/mimalloc"
-)
+if(WIN32)
+    set_target_properties(mimalloc-static
+            PROPERTIES FOLDER "Third Party/mimalloc"
+    )
+else()
+    set_target_properties(mimalloc-obj
+            PROPERTIES FOLDER "Third Party/mimalloc"
+    )
+endif()
 
 
 # --- Google Test & Google Benchmark (optional) ---
@@ -71,6 +82,11 @@ if(BUILD_EXTRAS)
     )
 endif()
 
+if(WIN32)
+    add_definitions(-DNOMINMAX)
+    add_definitions(-DWIN32_LEAN_AND_MEAN)
+    add_definitions(-D_WIN32_WINNT=0x0A00)
+endif()
 
 # --- Components separated into static libs ---
 add_library(RapidKV_Utility STATIC
@@ -142,8 +158,14 @@ target_include_directories(RapidKV PRIVATE
     inc/server
 )
 
+if(WIN32)
+    set(MIMALLOC_TARGET mimalloc-static)
+else()
+    set(MIMALLOC_TARGET mimalloc-obj)
+endif()
+
 target_link_libraries(RapidKV PRIVATE
-        mimalloc-obj
+    ${MIMALLOC_TARGET}
     RapidKV_Commands
     RapidKV_Protocol
     RapidKV_Storage
