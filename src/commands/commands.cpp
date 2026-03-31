@@ -148,8 +148,8 @@ void registerCommands(CommandDispatcher& dispatcher)
 	
 	dispatcher.registerCommand("PING", 0, 1, handler_PING);
 	dispatcher.registerCommand("ECHO", 1, 1, handler_ECHO);
-	dispatcher.registerCommand("DEL", 1, std::numeric_limits<int>::max(), handler_DEL);
-	dispatcher.registerCommand("EXISTS", 1, std::numeric_limits<int>::max(), handler_EXISTS);
+	dispatcher.registerCommand("DEL", 1, 1, handler_DEL);
+	dispatcher.registerCommand("EXISTS", 1, 1, handler_EXISTS);
 	dispatcher.registerCommand("INCR", 1, 1, handler_INCR);
 	dispatcher.registerCommand("DECR", 1, 1, handler_DECR);
 	dispatcher.registerCommand("INCRBY", 2, 2, handler_INCRBY);
