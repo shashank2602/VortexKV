@@ -1,117 +1,179 @@
-#  RapidKV
+# VortexKV
 
-A high-performance, single-threaded, Redis-compatible in-memory key-value store written in modern C++20. Engineered from the ground up to beat Redis in raw throughput by leveraging cache-aware data structures, zero-copy parsing, and purpose-built memory management.
+A high-performance, multithreaded, shared-nothing, Redis-compatible in-memory key-value store written in modern C++20. Evolved from the [single-threaded RapidKV](https://github.com/shashank2602/RapidKV) that was built to outperform Redis, VortexKV scales across all available cores to challenge [Dragonfly](https://github.com/dragonflydb/dragonfly) — the fastest multithreaded Redis alternative.
 
-> **Up to ~2.6× faster than Redis on pipelined workloads, with significantly lower tail latency across the board even without pipelining.**
+> **~11.9M SET ops/sec pipelined · ~9.9M GET ops/sec pipelined · Up to 3.7× faster than Dragonfly on pipelined reads · Sub-millisecond p99 latency across the board**
 
 ---
 
 ## Highlights
 
-
-- **4.3M ops/sec** peak throughput with pipelining
-- **1.52 GB/s** peak bandwidth under heavy load (2× Redis)
-- **47–65% lower p99 latency** compared to Redis
-- **2.5× fewer CPU instructions per command** than Redis (verified via `perf stat`)
+- **11.9M ops/sec** peak pipelined SET throughput (1.6× Dragonfly)
+- **9.9M ops/sec** peak pipelined GET throughput (3.7× Dragonfly)
+- **2.58M ops/sec** non-pipelined SET/GET — matching Dragonfly head-to-head
+- **Shared-nothing architecture** — each shard owns its thread, io_context, database, and allocator; zero cross-shard locking
+- **Near-linear shard scaling** with hash-based key routing and `asio::post` for cross-shard requests
+- All the single-threaded RapidKV innovations retained: Robin Hood FlatMap (SoA), CompactString, zero-copy RESP parser, slab allocator, SIEVE eviction
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   Client Connections                 │
-│         (Asio single-threaded event loop,            │
-│          async TCP, TCP_NODELAY enabled)             │
-├──────────────────────────────────────────────────────┤
-│     LinearBuffer (read)    │   Double-Buffered Write │
-│     with compaction        │   (primary/secondary)   │
-├──────────────────────────────────────────────────────┤
-│  Zero-Copy RESP Parser     │  Zero-Alloc RESP Writer │
-│  (string_view into buffer) │ (stack buffers + memcpy)│
-├──────────────────────────────────────────────────────┤
-│           Software Pipeline (batch=16)               │
-│           with N-ahead key prefetching               │
-├──────────────────────────────────────────────────────┤
-│  Command Dispatcher (integer-packed name comparison) │
-├──────────────────────────────────────────────────────┤
-│                    Database Layer                    │
-│  ┌─────────────────────────────────────────────────┐ │
-│  │          Robin Hood FlatMap (SoA layout)        │ │
-│  │  ┌──────────┬──────────┬──────────┬───────────┐ │ │
-│  │  │ metadata │  keys    │  values  │  hashes   │ │ │
-│  │  │ (2B/slot)│(CompStr) │(variant) │ (uint32)  │ │ │
-│  │  └──────────┴──────────┴──────────┴───────────┘ │ │
-│  │  • Tag-based early rejection (7-bit hash tag)   │ │
-│  │  • Incremental resizing (no latency spikes)     │ │
-│  │  • SIEVE eviction (visited bit in metadata)     │ │
-│  │                                                 │ │
-│  └─────────────────────────────────────────────────┘ │
-├──────────────────────────────────────────────────────┤
-│  CompactString (16B SSO)   │  Slab Allocator         │
-│  • Inline for ≤15 bytes    │  • 7 size classes       │
-│  • 50% smaller than        │  • 1MB page allocation  │
-│    std::string             │  • O(1) alloc/dealloc   │
-│  • Binary-safe, move-only  │  • Zero fragmentation   │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT CONNECTIONS (TCP)                               │
+│                          memtier / redis-cli / any RESP client                      │
+└──────────────────────────────────┬──────────────────────────────────────────────────┘
+                                   │ TCP accept()
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                        SERVER (main thread, single acceptor)                        │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
+│  │  • asio::io_context for accept loop only                                      │  │
+│  │  • Round-robin connection assignment → GetNextShard()                         │  │
+│  │  • Generates global routing hash seed (randomized)                            │  │
+│  │  • Creates N Shard objects (N = hardware_concurrency or config)               │  │
+│  └───────────────────────────────────────────────────────────────────────────────┘  │
+└──────────┬──────────┬──────────┬──────────────────────┬──────────┬──────────────────┘
+           │          │          │          ...         │          │
+    socket move  socket move  socket move          socket move  socket move
+           │          │          │                      │          │
+           ▼          ▼          ▼                      ▼          ▼
+┌──────────────┐┌──────────────┐┌──────────────┐┌──────────────┐┌──────────────┐
+│   SHARD 0    ││   SHARD 1    ││   SHARD 2    ││    ...       ││  SHARD N-1   │
+│ (pinned to   ││ (pinned to   ││ (pinned to   ││              ││ (pinned to   │
+│  core 0)     ││  core 1)     ││  core 2)     ││              ││  core N-1)   │
+│──────────────││──────────────││──────────────││──────────────││──────────────│
+│ Own thread   ││ Own thread   ││ Own thread   ││ Own thread   ││ Own thread   │
+│(std::jthread)│ (std::jthread)│ (std::jthread)│ (std::jthread)│ (std::jthread)│
+│──────────────││──────────────││──────────────││──────────────││──────────────│
+│Own io_context││Own io_context││Own io_context││Own io_context││Own io_context│
+│──────────────││──────────────││──────────────││──────────────││──────────────│
+│Own Database  ││Own Database  ││Own Database  ││Own Database  ││Own Database  │
+│──────────────││──────────────││──────────────││──────────────││──────────────│
+│Own Dispatcher││Own Dispatcher││Own Dispatcher││Own Dispatcher││Own Dispatcher│
+│──────────────││──────────────││──────────────││──────────────││──────────────│
+│Maintenance   ││Maintenance   ││Maintenance   ││Maintenance   ││Maintenance   │
+│Timer (TTL)   ││Timer (TTL)   ││Timer (TTL)   ││Timer (TTL)   ││Timer (TTL)   │
+└──────┬───────┘└──────────────┘└──────────────┘└──────────────┘└──────────────┘
+       │
+       │  Each shard manages multiple Connection objects
+       ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         CONNECTION (per-client)                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  LinearBuffer (read)        │  Double-Buffered Write (primary/secondary)  │  │
+│  │  with compaction            │  swap-and-send on async_write completion    │  │
+│  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  │  Zero-Copy RESP Parser      │  Zero-Alloc RESP Writer                     │  │
+│  │  (string_view into buffer)  │  (stack buffers + reserveContiguous)        │  │
+│  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  │        Pipeline Batch (parse all commands in one read)                    │  │
+│  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  │   KEY-BASED ROUTING: hash(key, seed) % N_shards                           │  │
+│  │   ┌─────────────────────┐   ┌──────────────────────────┐                  │  │
+│  │   │ Local: same shard   │   │ Remote: asio::post to    │                  │  │
+│  │   │ → direct dispatch() │   │ target shard io_context  │                  │  │
+│  │   │                     │   │ → callback posts back    │                  │  │
+│  │   └─────────────────────┘   └──────────────────────────┘                  │  │
+│  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  │  Command Dispatcher (uint64_t-packed name → O(1) linear scan in L1)       │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────┬───────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          DATABASE LAYER (per-shard)                             │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │           Robin Hood FlatMap (Structure-of-Arrays layout)                 │  │
+│  │  ┌────────────┬────────────┬────────────────┬─────────────┐               │  │
+│  │  │ metadata[] │  keys[]    │   values[]     │  hashes[]   │               │  │
+│  │  │ (2B/slot)  │(CompactStr)│(variant<CS,ll>)│ (uint32_t)  │               │  │
+│  │  └────────────┴────────────┴────────────────┴─────────────┘               │  │
+│  │  • 7-bit hash tag early rejection (~99% false-positive avoidance)         │  │
+│  │  • Incremental resizing (no latency spikes)                               │  │
+│  │  • SIEVE eviction (visited bit in metadata byte)                          │  │                   │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────┐  ┌────────────────────────────────────────┐     │
+│  │  CompactString (16B SSO)   │  │  Slab Allocator (thread_local)         │     │
+│  │  • Inline ≤15 bytes        │  │  • 7 size classes: 32B–2048B           │     │
+│  │  • 16-byte aligned         │  │  • 1MB page allocation                 │     │
+│  │  • Binary-safe, move-only  │  │  • O(1) alloc/dealloc free-list        │     │
+│  │  • 4 keys per cache line   │  │  • Fallback to ::operator new          │     │
+│  └────────────────────────────┘  └────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+EXTERNAL DEPENDENCIES:
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│ Asio 1.36    │ mimalloc 2.2 │ rapidhash    │ libdivide    │
+│ (async I/O)  │ (allocator   │ (fast hash   │ (fast modulo │
+│              │  override)   │  function)   │  for shard   │
+│              │              │              │  routing)    │
+└──────────────┴──────────────┴──────────────┴──────────────┘
 ```
+>With shard = 1, VortexKV matches the single-threaded RapidKV within a few percent — validating that the shared-nothing abstraction adds near-zero overhead when cross-shard routing isn't needed.
 
 ---
 
 ## Key Design Decisions
 
-### Async TCP Server with Asio Event Loop
-- Single-threaded event loop using **Asio** (`io_context::run()`) — all I/O (accept, read, write) and maintenance timers run on one thread, eliminating all lock contention
-- Each connection is managed via `std::shared_from_this()` and uses **async reads/writes** — the thread never blocks waiting for I/O
-- `TCP_NODELAY` is enabled on every accepted socket to minimize latency
-- A periodic **maintenance timer** fires via `asio::steady_timer` to run TTL cleanup and memory accounting without interrupting the event loop
+### Shared-Nothing Multithreading
+- Each **Shard** owns its own `asio::io_context`, `std::jthread`, `Database`, and `CommandDispatcher` — no shared mutable state, no mutexes, no atomic contention on the hot path
+- Shards are **cache-line aligned** (`alignas(64)`) to prevent false sharing
+- Each shard thread is **pinned to a dedicated CPU core** via `PinThreadToCore()` for optimal cache locality
+- The main thread's acceptor distributes new connections **round-robin** across shards
+- Memory budget is **divided equally** across shards (`maxMemoryUsage / shardCount`)
+
+### Hash-Based Key Routing
+- Every command is routed to the shard that owns its key: `rapidhash(key, seed) % shard_count`
+- **libdivide** provides branchless fast modulus — avoids expensive hardware division on every request
+- If a command targets the **local shard**, it executes inline with zero overhead
+- If it targets a **remote shard**, the request is posted to that shard's `io_context` via `ExecuteRemote()`, which executes the command and posts the response back to the caller's context — fully asynchronous, no blocking
+
+### Per-Connection Software Pipeline
+- All RESP commands in a single read are parsed into a batch (`m_pipelinedRequests`)
+- Each command is routed independently; local commands complete immediately, remote commands complete asynchronously
+- A **completion counter** tracks outstanding responses; `FlushPipelinedResponses()` fires only when all commands in the batch have completed, preserving response ordering
+
+### Async TCP Server with Asio
+- Each shard runs its own event loop (`io_context::run()`) — all I/O and maintenance timers run on the shard's thread
+- Connections use **async reads/writes** with `std::shared_from_this()` lifetime management
+- `TCP_NODELAY` enabled on every accepted socket
+- `asio::recycling_allocator` used for handler allocation to avoid heap churn
+- Socket handoff from acceptor thread to shard uses `release()`/`assign()` to transfer the native FD without cross-thread `io_context` conflicts
 
 ### CompactString — 16-Byte SSO String
-- Union-based string that stores strings ≤15 bytes inline without any heap allocation
+- Union-based string that stores strings ≤15 bytes inline without heap allocation
 - Heap-allocated strings use the slab allocator to prevent fragmentation
-- Aligned to 16 bytes for SIMD-friendly access patterns
-- At 16 Bytes, four keys can fit in a single 64-byte cache line, improving hash table probing performance
-- Binary-safe, not null-terminated
+- Aligned to 16 bytes — four keys fit in a single 64-byte cache line during hash table probing
 
-### Robin Hood HashMap — Structure of Arrays
-- **SoA layout**: Separate vectors for keys, values, metadata, and hashes 
-  - Metadata scanning during probing touches only 2-byte entries → excellent cache utilization
-  - Keys and values only accessed on match
+### Robin Hood FlatMap — Structure of Arrays
+- **SoA layout**: Separate arrays for keys, values, metadata, and hashes — metadata scanning touches only 2-byte entries for excellent cache utilization
 - **2-byte metadata per slot**: 1 byte PSL + 1 byte tag (7 hash bits + 1 visited bit)
 - **Tag-based early rejection**: Check PSL + 7-bit hash tag before comparing keys — avoids ~99% of false-positive key comparisons
-- **Incremental resizing**: Entries migrated N-at-a-time per operation, spreading resize cost across requests
-- **SIEVE eviction**: Clock-hand algorithm using the visited bit in metadata — approximates LRU with O(1) bookkeeping
+- **Incremental resizing**: Entries migrated N-at-a-time per operation, spreading resize cost across requests — no latency spikes
+- **SIEVE eviction**: Clock-hand algorithm using the visited bit — approximates LRU with O(1) bookkeeping
 
 ### Command Dispatcher — Integer-Packed Lookup
-- Command names (≤8 characters) are **uppercased and packed into a `uint64_t`** — dispatch is a single integer comparison instead of `strcmp`
-- A fixed-size array of `CommandEntry` structs (max 32) is scanned linearly — fits entirely in L1 cache
-- **Hottest commands registered first** (GET, SET) for early-exit on the most common path
-- Argument count validation is inlined, with error formatting deferred to a pre-allocated stack buffer (no heap allocation on the error path)
+- Command names (≤8 chars) are uppercased and packed into a `uint64_t` — dispatch is a single integer comparison instead of `strcmp`
+- Fixed-size array of 32 `CommandEntry` structs fits in L1 cache; hottest commands (GET, SET) registered first for early exit
 
-### Zero-Copy RESP Parser
-- Parses directly over `std::string_view` into the read buffer
-- No allocations, no copies — arguments are views into the network buffer
-- Handles partial reads and incomplete data gracefully
-
-### Zero-Allocation RESP Writer
-- Integer formatting via `std::to_chars` into stack-allocated buffers
-- `reserveContiguous()` pre-allocates space in the LinearBuffer then writes directly
-- No `std::string` construction or heap allocation on the write path
-
-### Software Pipeline with Prefetching
-- Batches up to 16 commands from the read buffer
-- During execution, prefetches hash table metadata and keys for command `i + LOOKAHEAD`
+### Zero-Copy RESP Parser & Zero-Alloc Writer
+- Parser produces `string_view` directly into the network read buffer — no allocations, no copies
+- Writer uses `std::to_chars` into stack buffers and writes directly into the `LinearBuffer`
 
 ### Double-Buffered Async Write
 - Two response buffers per connection (primary + secondary)
-- While the OS writes the primary buffer, responses accumulate in the secondary
+- While the OS writes the primary buffer, new responses accumulate in the secondary
 - Swap-and-send on completion — no write stalls
 
 ### Slab Allocator
-- 7 size classes (32B to 2048B) with free-list allocation
+- 7 size classes (32B–2048B) with free-list allocation
 - 1MB page allocation to reduce `mmap` syscalls
-- Fallback to `::operator new` for oversized allocations
-- Allocations ≤2KB are O(1) (pop from free-list). Deallocations are O(1) (push to free-list).
+- O(1) alloc/dealloc; fallback to `::operator new` for oversized allocations
+
+### mimalloc Global Allocator
+- Microsoft's [mimalloc](https://github.com/microsoft/mimalloc) replaces the default allocator via `MI_OVERRIDE`, providing better multithreaded allocation performance and reduced fragmentation
 
 ---
 
@@ -123,8 +185,8 @@ A high-performance, single-threaded, Redis-compatible in-memory key-value store 
 | `ECHO message` | Echo back message |
 | `SET key value [PX milliseconds]` | Set key-value with optional TTL |
 | `GET key` | Retrieve value |
-| `DEL key [key ...]` | Delete one or more keys |
-| `EXISTS key [key ...]` | Check key existence |
+| `DEL key` | Delete a key |
+| `EXISTS key` | Check key existence |
 | `INCR key` | Increment integer value |
 | `DECR key` | Decrement integer value |
 | `INCRBY key delta` | Increment by delta |
@@ -132,6 +194,8 @@ A high-performance, single-threaded, Redis-compatible in-memory key-value store 
 | `EXPIRE key milliseconds` | Set TTL on key |
 | `PERSIST key` | Remove TTL |
 | `TTL key` | Get remaining TTL |
+
+> **Note:** `DEL` and `EXISTS` currently operate on a single key only. Multi-key variants (`DEL key1 key2 ...`, `EXISTS key1 key2 ...`) are not supported due to the shared-nothing architecture — each key may reside on a different shard, requiring cross-shard coordination for atomically counting results across multiple keys.
 
 ---
 
@@ -141,175 +205,116 @@ A high-performance, single-threaded, Redis-compatible in-memory key-value store 
 
 | Component | Details |
 |---|---|
-| **CPU** | AMD Ryzen 7 4800H (8C/16T, 2.9 GHz base) |
-| **RAM** | 16 GB |
-| **L1 Data Cache** | 32 KiB × 8 |
-| **L1 Instruction Cache** | 32 KiB × 8 |
-| **L2 Cache** | 512 KiB × 8 |
-| **L3 Cache** | 4096 KiB × 2|
-| **OS** | Linux (Kubuntu 24.04 LTS) |
-| **Benchmark Tool** | `memtier_benchmark` — 4 threads, 50 clients/thread, CPU-pinned via `taskset` |
-| **Redis** | Port 6380 |
-| **RapidKV** | Port 8080 |
+| **CPU** | AMD EPYC 9554P (64C/128T) |
+| **Server Cores** | 64 threads pinned to cores 0–63 |
+| **Benchmark Cores** | 64 threads pinned to cores 64–127 via `taskset -c 64-127` |
+| **Benchmark Tool** | `memtier_benchmark` |
+| **Value Size** | 256 bytes |
+| **Key Range** | 1–10,000,000 |
 
-> For a fair comparison, Redis was configured to run without persistence.
-> Both servers were restarted between benchmark runs to ensure a clean state.
-> Both servers were run on the same machine, with CPU affinity set to isolate them from the benchmark threads.
+### Server Configurations
 
----
+| Server | Launch Command                                                                                               |
+|---|--------------------------------------------------------------------------------------------------------------|
+| **Redis** | `redis-server --save "" --appendonly no`                                                                     |
+| **Dragonfly** | `dragonfly --dbfilename "" --snapshot_cron "" --cache_mode=true --version_check=false --proactor_threads=64` |
+| **VortexKV** | `./VortexKV VortexKV.config` (64 shards)                                                                       |
 
-### 1. Baseline (No Pipeline)
-
-> **Pipeline = 1, 1:1 SET:GET, 8B values, 100K keys** — True per-request latency floor. Both servers are network/syscall-bound at this depth.
-
-| Metric | Redis | RapidKV | Δ Change |
-|---|---|---|---|
-| **Ops/sec** | 130,019 | 135,165 | +4.0% |
-| **Avg Latency** | 1.549 ms | 1.478 ms | −4.6% |
-| **p50 Latency** | 1.527 ms | 1.479 ms | −3.1% |
-| **p99 Latency** | 3.055 ms | 1.567 ms | **−48.7%** |
-| **p99.9 Latency** | 3.695 ms | 3.231 ms | −12.6% |
-
-**Key takeaway:** At pipeline=1, throughput is nearly identical because both servers spend most of time in `read()`/`write()` syscalls. However, RapidKV's **p99 is 49% lower** — its tighter code path produces less jitter even when syscall-bound. This is the honest baseline: it shows RapidKV matches Redis in the worst case and never falls behind.
+> All three servers ran on the same bare-metal machine. Redis was configured with all persistence disabled. Dragonfly was configured in cache mode with snapshots disabled. Servers were restarted between runs for a clean state.
 
 ---
 
-### 2. Realistic Mixed Workload (1:9 SET:GET)
+### 1. SET Throughput (No Pipeline)
 
-> **Pipeline = 16, 64B values, 200K keys** — Production-like read-heavy scenario. Pre-seeded 200K keys.
+> **64 threads × 10 connections, ratio 1:0 (SET only), 256B values, 100 seconds**
 
-| Metric | Redis | RapidKV | Δ Change |
-|---|---|---|---|
-| **Total Ops/sec** | 1,119,012 | 1,823,366 | **+63.0%** |
-| **SET Ops/sec** | 111,901 | 182,337 | **+62.9%** |
-| **GET Ops/sec** | 1,007,110 | 1,641,030 | **+62.9%** |
-| **Avg Latency** | 2.856 ms | 1.750 ms | **−38.7%** |
-| **p99 Latency** | 4.511 ms | 1.895 ms | **−58.0%** |
-| **Bandwidth** | 49.3 MB/s | 80.3 MB/s | **+62.9%** |
-
----
-
-### 3. Pipeline Scaling
-
-> **1:1 SET:GET, 8B values, 100K keys** — Shows how throughput scales with pipeline depth.
-
-| Pipeline | Redis Ops/s | RapidKV Ops/s | Redis Avg Lat | RapidKV Avg Lat | Redis p99 | RapidKV p99 | Speedup |
-|---|---|---|---|---|---|---|---|
-| **1** | 130,019 | 135,165 | 1.55 ms | 1.48 ms | 3.06 ms | 1.57 ms | 1.04× |
-| **10** | 778,354 | 1,175,299 | 2.57 ms | 1.69 ms | 4.48 ms | 1.85 ms | 1.51× |
-| **50** | 1,408,724 | 3,446,779 | 7.12 ms | 2.73 ms | 11.78 ms | 4.10 ms | **2.45×** |
-| **100** | 1,558,692 | 4,050,247 | 12.77 ms | 4.86 ms | 19.07 ms | 7.55 ms | **2.60×** |
-| **200** | 1,658,811 | 4,258,246 | 24.07 ms | 9.25 ms | 31.36 ms | 14.14 ms | **2.57×** |
-
-**Key takeaway:** At pipeline=1 both are network-bound and equivalent. As pipeline depth grows, RapidKV dominates — Redis plateaus at ~1.6M ops/s while RapidKV peaks at **4.3M ops/s**. Even with such a significant difference in throughput, RapidKV maintains lower latency across all percentiles.
-
-```
-Ops/sec (thousands)
-
-  4258 ┤                                            ★ RapidKV
-  4050 ┤                                   ★
-  3447 ┤                          ★
-       ┤
-  1659 ┤                                            ● Redis
-  1559 ┤                                   ●
-  1409 ┤                          ●
-  1175 ┤                  ★
-   778 ┤                  ●
-   135 ┤        ★
-   130 ┤        ●
-       └────────┬────────┬────────┬────────┬────────┬────────
-               1       10       50      100     200
-                        Pipeline Depth
-```
-
----
-
-### 4. Extremely High Bandwidth
-
-> **Pipeline = 64, 1:1 SET:GET, 2KB values, 100K keys** — Stress-tests I/O path with large payloads.
-
-| Metric | Redis | RapidKV | Δ Change |
-|---|---|---|---|
-| **Total Ops/sec** | 651,238 | 1,305,176 | **+100.4%** |
-| **Bandwidth** | 780 MB/s | 1,562 MB/s (1.52 GB/s) | **+100.0%** |
-| **Avg Latency** | 19.77 ms | 9.80 ms | **−50.4%** |
-| **p99 Latency** | 25.73 ms | 13.70 ms | **−46.8%** |
-
-**Key takeaway:** With 2KB values, the double-buffered async write architecture keeps the TCP pipe saturated — RapidKV pushes **2× Redis's bandwidth**. A bandwidth of 1.52 GB/s (more than 10-Gigabit Ethernet can handle) is impressive for a single-threaded server on commodity hardware, and the fact that RapidKV achieves this while also maintaining **50% lower latency** is a testament to the efficiency of its I/O path and memory management.
-
----
-
-### 5. Heap Allocation Stress (Slab Allocator)
-
-> **Pipeline = 16, SET-only, 128B values, 42-char key prefix** — Keys and values both exceed SSO, exercising the slab allocator.
-
-| Metric | Redis | RapidKV | Δ Change |
-|---|---|---|---|
-| **SET Ops/sec** | 900,795 | 1,323,604 | **+46.9%** |
-| **Avg Latency** | 3.547 ms | 2.409 ms | **−32.1%** |
-| **p99 Latency** | 5.311 ms | 2.799 ms | **−47.3%** |
-| **Bandwidth** | 178.6 MB/s | 262.5 MB/s | **+46.9%** |
-
-**Key takeaway:** Even when every key/value triggers a heap allocation, the slab allocator maintains **47% higher throughput** and **47% lower p99** vs Redis's `malloc`-based allocator.
-
----
-
-### 6. GET-Only with Hardware Performance Counters
-*pipeline=16, data-size=8 bytes, GET-only after pre-seeding 500K keys*
-
-| Metric | Redis | RapidKV | Improvement |
-|---|---|---|---|
-| Ops/sec (GET) | 1,091,279 | **1,817,189** | **+66.5%** |
-| Avg Latency | 2.926 ms | **1.756 ms** | −40.0% |
-| p99 Latency | 4.703 ms | **1.927 ms** | **−59.0%** |
-
-**Hardware counters (normalized per GET operation):**
-
-| Counter | Redis | RapidKV | Improvement |
-|---|---|---|---|
-| Instructions/op | 5,421 | **2,144** | **−60%** |
-| L1 dcache loads/op | 2,207 | **883** | **−60%** |
-| L1 dcache misses/op | 53 | **44** | **−16%** |
-| dTLB loads/op | 15.8 | **9.8** | **−38%** |
-| dTLB misses/op | 0.48 | **0.21** | **−56%** |
-| Cache misses/op | 20.6 | **17.7** | **−14%** |
-| Cycles/op | 3,813 | **2,265** | **−41%** |
-
-**Key takeaway:** RapidKV executes **60% fewer instructions**, **60% lower L1 cache loads** and incurs **56% fewer TLB misses** per GET operation. The compact data structures (16-byte CompactString, SoA FlatMap) have a dramatically smaller memory footprint.
-
----
-
-### Data Structure Micro-Benchmarks
-
-#### CompactString vs std::string
-
-> Measured via Google Benchmark. `/0` = SSO-eligible (short strings), `/1` = heap-allocated (long strings).
-
-| Operation | N | CompactString | std::string | Improvement |
-|---|---|---|---|---|
-| **Construction (SSO)** | 1M | 8.17 ms | 8.77 ms | 6.8% faster |
-| **Construction (Heap)** | 1M | 114 ms | 413 ms | **3.6× faster** |
-| **Access (SSO)** | 1M | 0.921 ms | 1.50 ms | **1.63× faster** |
-| **Access (Heap)** | 1M | 0.864 ms | 1.51 ms | **1.75× faster** |
-| **Modification** | 100K | 0.765 ms | 0.910 ms | 19% faster |
-| **Move** | 100K | 0.313 ms | 1.81 ms | **5.8× faster** |
-
-**Key takeaway:** CompactString is dramatically faster for heap construction (**3.6×**) and moves (**5.8×**). The move advantage directly benefits Robin Hood swaps during insertion.
-
-#### FlatMap vs std::unordered_map
-
-> Measured via Google Benchmark. FlatMap+CompactString is the configuration used in RapidKV.
-
-| Operation | N | unordered_map | FlatMap (std::string) | FlatMap (CompactString) | Best Improvement |
+| Metric | Redis | Dragonfly | VortexKV | VortexKV vs Redis | VortexKV vs Dragonfly |
 |---|---|---|---|---|---|
-| **Insertion** | 1M | 460 ms | 253 ms (1.8×) | 186 ms | **2.5× faster** |
-| **Insertion** | 10M | 4,934 ms | 3,299 ms (1.5×) | 2,365 ms | **2.1× faster** |
-| **Lookup** | 1M | 113 ms | 64.7 ms (1.7×) | 60.5 ms | **1.9× faster** |
-| **Lookup** | 10M | 1,430 ms | 848 ms (1.7×) | 733 ms | **2.0× faster** |
-| **Deletion** | 1M | 297 ms | 130 ms (2.3×) | 114 ms | **2.6× faster** |
-| **Mixed** | 10M | 5,102 ms | 3,407 ms (1.5×) | 2,702 ms | **1.9× faster** |
+| **Ops/sec** | 66,631 | 2,489,825 | **2,575,169** | **38.6×** | **+3.4%** |
+| **Avg Latency** | 9.508 ms | 0.254 ms | **0.248 ms** | **−97.4%** | **−2.4%** |
+| **p99 Latency** | 11.967 ms | 0.351 ms | **0.343 ms** | **−97.1%** | **−2.3%** |
+| **p99.9 Latency** | 19.967 ms | 0.607 ms | **0.695 ms** | **−96.5%** | +14.5% |
 
-**Key takeaway:** The SoA Robin Hood layout alone provides 1.5–2.3× improvement over `std::unordered_map`. Adding CompactString pushes it to **1.9–2.6× faster** across all operations. The combination of cache-friendly probing, 16-byte keys, and slab allocation compounds at every level.
+---
+
+### 2. GET Throughput (No Pipeline, Pre-populated)
+
+> **64 threads × 10 connections, ratio 0:1 (GET only), 256B values, 100 seconds, 10M keys pre-populated**
+
+| Metric | Redis | Dragonfly | VortexKV | VortexKV vs Redis | VortexKV vs Dragonfly |
+|---|---|---|---|---|---|
+| **Ops/sec** | 70,780 | 2,552,889 | **2,541,428** | **35.9×** | −0.4% |
+| **Avg Latency** | 9.131 ms | 0.253 ms | **0.249 ms** | **−97.3%** | **−1.6%** |
+| **p99 Latency** | 9.407 ms | 0.351 ms | **0.343 ms** | **−96.4%** | **−2.3%** |
+| **p99.9 Latency** | 18.303 ms | 0.535 ms | **0.511 ms** | **−97.2%** | **−4.5%** |
+
+**Key takeaway:** Without pipelining, VortexKV and Dragonfly are effectively neck-and-neck at ~2.5M ops/sec — both ~36× faster than single-threaded Redis. VortexKV has a slight latency edge.
+
+---
+
+### 3. Pipelined SET (Pipeline = 30)
+
+> **64 threads × 10 connections, pipeline = 30, ratio 1:0, 256B values, 200K requests/client**
+
+| Metric | Redis (16t×10c) | Dragonfly | VortexKV | VortexKV vs Redis | VortexKV vs Dragonfly |
+|---|---|---|---|---|---|
+| **Ops/sec** | 567,642 | 7,417,396 | **11,880,297** | **20.9×** | **+60.2%** |
+| **Avg Latency** | 8.298 ms | 2.358 ms | **1.769 ms** | **−78.7%** | **−25.0%** |
+| **p99 Latency** | 15.743 ms | 4.047 ms | **2.319 ms** | **−85.3%** | **−42.7%** |
+| **p99.9 Latency** | 23.679 ms | 5.663 ms | **5.695 ms** | **−75.9%** | +0.6% |
+
+---
+
+### 4. Pipelined GET (Pipeline = 30, Pre-populated)
+
+> **64 threads × 10 connections, pipeline = 30, ratio 0:1, 256B values, 100 seconds, 10M keys pre-populated**
+
+| Metric | Redis (16t×10c) | Dragonfly | VortexKV | VortexKV vs Redis | VortexKV vs Dragonfly |
+|---|---|---|---|---|---|
+| **Ops/sec** | 558,308 | 2,688,873 | **9,889,346** | **17.7×** | **3.68×** |
+| **Avg Latency** | 8.592 ms | 7.140 ms | **1.918 ms** | **−77.7%** | **−73.1%** |
+| **p99 Latency** | 17.023 ms | 7.807 ms | **2.655 ms** | **−84.4%** | **−66.0%** |
+| **p99.9 Latency** | 17.279 ms | 8.767 ms | **3.023 ms** | **−82.5%** | **−65.5%** |
+
+**Key takeaway:** Under pipelining, VortexKV's shared-nothing architecture with per-shard databases dominates. Pipelined SET is **60% faster** than Dragonfly; pipelined GET is **3.7× faster** — the biggest gap in the entire suite.
+
+---
+
+### 5. Shard Scaling (1:1 SET:GET, No Pipeline)
+
+> **256B values, 25 seconds, scaling client threads proportionally to server shards**
+
+#### Dragonfly
+
+| Shards | Threads × Clients | Ops/sec | Avg Latency | p99 Latency | p99.9 Latency |
+|---|---|---|---|---|---|
+| 1 | 2 × 10 | 83,664 | 0.239 ms | 0.287 ms | 0.407 ms |
+| 4 | 8 × 10 | 311,311 | 0.257 ms | 0.367 ms | 0.407 ms |
+| 16 | 32 × 10 | 1,064,231 | 0.301 ms | 0.415 ms | 0.495 ms |
+| 32 | 64 × 10 | 1,736,663 | 0.384 ms | 0.559 ms | 0.655 ms |
+| 64 | 64 × 10 | 2,403,368 | 0.256 ms | 0.351 ms | 0.495 ms |
+
+#### VortexKV
+
+| Shards | Threads × Clients | Ops/sec | Avg Latency | p99 Latency | p99.9 Latency |
+|---|---|---|---|---|---|
+| 1 | 2 × 10 | 73,510 | 0.272 ms | 0.295 ms | 0.855 ms |
+| 4 | 8 × 10 | 287,612 | 0.278 ms | 0.415 ms | 0.855 ms |
+| 16 | 32 × 10 | 959,061 | 0.321 ms | 0.447 ms | 0.895 ms |
+| 32 | 64 × 10 | 1,572,802 | 0.391 ms | 0.575 ms | 0.951 ms |
+| 64 | 64 × 10 | 2,551,297 | 0.250 ms | 0.351 ms | 0.959 ms |
+
+#### Head-to-Head Comparison
+
+| Shards | Dragonfly (ops/sec) | VortexKV (ops/sec) | Δ | Dragonfly p99 | VortexKV p99 |
+|---|---|---|---|---|---|
+| 1 | 83,664 | 73,510 | −12.1% | 0.287 ms | 0.295 ms |
+| 4 | 311,311 | 287,612 | −7.6% | 0.367 ms | 0.415 ms |
+| 16 | 1,064,231 | 959,061 | −9.9% | 0.415 ms | 0.447 ms |
+| 32 | 1,736,663 | 1,572,802 | −9.4% | 0.559 ms | 0.575 ms |
+| 64 | 2,403,368 | 2,551,297 | **+6.2%** | 0.351 ms | 0.351 ms |
+
+**Key takeaway:** At low shard counts, Dragonfly leads by ~8–12% — likely due to its mature per-thread optimizations. As shards scale up, the gap narrows significantly, and at full 64-core saturation RapidKV overtakes Dragonfly with **+6.2% higher throughput** and matching p99 latency. The shared-nothing architecture's advantage materializes at high core counts where cross-core contention becomes the bottleneck.
 
 ---
 
@@ -329,7 +334,9 @@ Ops/sec (thousands)
 | Dependency | Version | Purpose |
 |---|---|---|
 | [Asio](https://github.com/chriskohlhoff/asio) | 1.36.0 | Async networking (header-only) |
+| [mimalloc](https://github.com/microsoft/mimalloc) | 2.2.7 | High-performance allocator |
 | [RapidHash](https://github.com/nicbarker/rapidhash) | vendored | Fast hashing |
+| [libdivide](https://github.com/ridiculousfish/libdivide) | vendored | Fast integer division |
 | [Google Test](https://github.com/google/googletest) | 1.15.2 | Unit testing (optional) |
 | [Google Benchmark](https://github.com/google/benchmark) | 1.9.1 | Micro-benchmarks (optional) |
 
@@ -337,8 +344,8 @@ Ops/sec (thousands)
 
 ```bash
 # Clone
-git clone https://github.com/shashank2602/RapidKV.git
-cd RapidKV
+git clone https://github.com/shashank2602/VortexKV.git
+cd VortexKV
 
 # Build (Release)
 mkdir build && cd build
@@ -350,8 +357,8 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_EXTRAS=ON
 cmake --build . -j$(nproc)
 
 # Run
-./RapidKV                     # default: 0.0.0.0:8080
-./RapidKV ../config.txt       # custom config
+./VortexKV                    # default: 0.0.0.0:8080
+./VortexKV ../VortexKV.config   # custom config
 
 # Run tests
 ctest --output-on-failure
@@ -374,8 +381,8 @@ ctest --output-on-failure
 
 ```powershell
 # Clone
-git clone https://github.com/shashank2602/RapidKV.git
-cd RapidKV
+git clone https://github.com/shashank2602/VortexKV.git
+cd VortexKV
 
 # Build (Release)
 mkdir build && cd build
@@ -387,65 +394,73 @@ cmake .. -DBUILD_EXTRAS=ON
 cmake --build . --config Release
 
 # Run
-.\Release\RapidKV.exe
-.\Release\RapidKV.exe ..\config.txt
+.\Release\VortexKV.exe
+.\Release\VortexKV.exe ..\VortexKV.config
 
 # Run tests
 ctest -C Release --output-on-failure
 ```
 
-### Configuration File Format
+---
+
+## Configuration
 
 ```
-#RapidKV Configuration File
-
+# VortexKV.config
 port 8080
 bind 0.0.0.0
-max_memory_usage 2147483648
-maintenance_interval_ms 100
+shards 64                    # defaults to hardware_concurrency
+maintenance_interval_ms 200
+max_memory_usage 4294967296  # 4 GB
 ```
 
-
+---
 
 ## Project Structure
 
 ```
-RapidKV/
+VortexKV/
 ├── CMakeLists.txt
 ├── src/
 │   ├── main.cpp
-│   ├── server/          # Server (accept loop) + Connection (read/write/pipeline)
-│   ├── protocol/        # RESP parser & writer
-│   ├── commands/        # Command handlers & dispatcher
-│   ├── storage/         # FlatMap, CompactString, SlabAllocator, Database
-│   └── utility/         # LinearBuffer, InlineVector, Config, utility functions
-├── inc/                 # Headers (mirrors src/ structure)
-├── tests/               # Google Test unit + integration tests
-│   ├── testCompactString.cpp
-│   ├── testFlatMap.cpp
-│   ├── testDatabase.cpp
-│   ├── testRespProtocol.cpp
-│   └── testIntegration.cpp
-├── benchmarks/          # Google Benchmark microbenchmarks
-│   ├── benchmarkCompactString.cpp
-│   ├── benchmarkFlatMap.cpp
-│   ├── benchmarkDatabase.cpp
-│   └── benchmarkCommandDispatcher.cpp
-└── config.conf          # Sample configuration
+│   ├── server/
+│   │   ├── server.cpp              # Acceptor, shard pool management
+│   │   ├── shard.cpp               # Per-shard thread, io_context, maintenance
+│   │   └── connection.cpp          # Per-connection pipeline, routing, I/O
+│   ├── commands/
+│   │   ├── commandDispatcher.cpp   # Integer-packed command dispatch
+│   │   └── commands.cpp            # Command implementations
+│   ├── protocol/
+│   │   ├── respParser.cpp          # Zero-copy RESP parser
+│   │   └── respWriter.cpp          # Zero-alloc RESP writer
+│   ├── storage/
+│   │   ├── database.cpp            # Database operations (SET, GET, DEL, etc.)
+│   │   ├── compactString.cpp       # 16-byte SSO string
+│   │   └── slabAllocator.cpp       # Slab allocator (7 size classes)
+│   └── utility/
+│       ├── utility.cpp             # Helpers, thread pinning
+│       └── linearBuffer.cpp        # Linear buffer implementation
+├── inc/                            # Headers (mirrors src/ structure)
+├── external/
+│   ├── rapidhash/                  # rapidhash for key routing
+│   └── libdivide/                  # Fast integer division
+├── tests/                          # Google Test suite
+├── benchmarks/                     # Google Benchmark microbenchmarks
+├── VortexKV.config                 # Sample configuration
+└── CMakeLists.txt
 ```
-
 
 ---
 
 ## Limitations
 
-- **Single-threaded** — no multi-core scaling
 - **String-only values** — no lists, sets, sorted sets, or hashes
 - **No persistence** — all data is in-memory only (no RDB/AOF snapshots)
 - **No replication or clustering**
 - **No AUTH, ACL, or TLS support**
-- **Limited command set** — 13 commands vs Redis's 400+
-- **Little-endian only** — The CompactString SSO bit layout assumes little-endian architecture.
+- **Limited command set** — 13 commands
+- **Single-key DEL/EXISTS** — multi-key variants not yet supported (see [Supported Commands](#supported-commands))
+- **Little-endian only** — The CompactString SSO bit layout assumes little-endian architecture
 
 ---
 

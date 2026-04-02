@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(RapidKV)
+project(VortexKV)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -89,19 +89,19 @@ if(WIN32)
 endif()
 
 # --- Components separated into static libs ---
-add_library(RapidKV_Utility STATIC
+add_library(VortexKV_Utility STATIC
     src/utility/utility.cpp
     inc/utility/utility.h
     src/utility/linearBuffer.cpp
     inc/utility/linearBuffer.h
     inc/utility/config.h
 )
-target_include_directories(RapidKV_Utility PUBLIC
+target_include_directories(VortexKV_Utility PUBLIC
     inc/utility
 )
-set_target_properties(RapidKV_Utility PROPERTIES FOLDER "Libraries")
+set_target_properties(VortexKV_Utility PROPERTIES FOLDER "Libraries")
 
-add_library(RapidKV_Storage STATIC
+add_library(VortexKV_Storage STATIC
     src/storage/slabAllocator.cpp
     inc/storage/slabAllocator.h
     src/storage/compactString.cpp
@@ -110,39 +110,39 @@ add_library(RapidKV_Storage STATIC
     inc/storage/database.h
     inc/storage/flatMap.h
 )
-target_include_directories(RapidKV_Storage PUBLIC
+target_include_directories(VortexKV_Storage PUBLIC
     inc/storage
     external/rapidhash/inc
 )
-target_link_libraries(RapidKV_Storage PUBLIC RapidKV_Utility)
-set_target_properties(RapidKV_Storage PROPERTIES FOLDER "Libraries")
+target_link_libraries(VortexKV_Storage PUBLIC VortexKV_Utility)
+set_target_properties(VortexKV_Storage PROPERTIES FOLDER "Libraries")
 
-add_library(RapidKV_Protocol STATIC
+add_library(VortexKV_Protocol STATIC
     src/protocol/respParser.cpp
     inc/protocol/respParser.h
     src/protocol/respWriter.cpp
     inc/protocol/respWriter.h
 )
-target_include_directories(RapidKV_Protocol PUBLIC
+target_include_directories(VortexKV_Protocol PUBLIC
     inc/protocol
 )
-target_link_libraries(RapidKV_Protocol PUBLIC RapidKV_Utility)
-set_target_properties(RapidKV_Protocol PROPERTIES FOLDER "Libraries")
+target_link_libraries(VortexKV_Protocol PUBLIC VortexKV_Utility)
+set_target_properties(VortexKV_Protocol PROPERTIES FOLDER "Libraries")
 
-add_library(RapidKV_Commands STATIC
+add_library(VortexKV_Commands STATIC
     src/commands/commandDispatcher.cpp
     inc/commands/commandDispatcher.h
     src/commands/commands.cpp
     inc/commands/commands.h
 )
-target_include_directories(RapidKV_Commands PUBLIC
+target_include_directories(VortexKV_Commands PUBLIC
     inc/commands
 )
-target_link_libraries(RapidKV_Commands PUBLIC RapidKV_Storage RapidKV_Protocol)
-set_target_properties(RapidKV_Commands PROPERTIES FOLDER "Libraries")
+target_link_libraries(VortexKV_Commands PUBLIC VortexKV_Storage VortexKV_Protocol)
+set_target_properties(VortexKV_Commands PROPERTIES FOLDER "Libraries")
 
-# --- Main RapidKV executable ---
-add_executable(RapidKV
+# --- Main VortexKV executable ---
+add_executable(VortexKV
     src/main.cpp
     src/server/server.cpp
     inc/server/server.h
@@ -152,7 +152,7 @@ add_executable(RapidKV
     inc/server/shard.h
 )
 
-target_include_directories(RapidKV PRIVATE
+target_include_directories(VortexKV PRIVATE
     ${asio_SOURCE_DIR}/asio/include
     external/libdivide/inc
     inc/server
@@ -164,12 +164,12 @@ else()
     set(MIMALLOC_TARGET mimalloc-obj)
 endif()
 
-target_link_libraries(RapidKV PRIVATE
+target_link_libraries(VortexKV PRIVATE
     ${MIMALLOC_TARGET}
-    RapidKV_Commands
-    RapidKV_Protocol
-    RapidKV_Storage
-    RapidKV_Utility
+    VortexKV_Commands
+    VortexKV_Protocol
+    VortexKV_Storage
+    VortexKV_Utility
 )
 
 if(BUILD_EXTRAS)
