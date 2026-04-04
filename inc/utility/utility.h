@@ -232,39 +232,6 @@ struct CommandRequest {
 };
 
 
-class InlineResponseBuffer {
-
-private:
-	constexpr static int kInlineCapacity = 128;
-
-	char m_inlineBuffer[kInlineCapacity] = {0};
-	std::vector<char> m_heapBuffer;
-	uint64_t m_size = 0;
-
-public:
-
-	InlineResponseBuffer() = default;
-
-	InlineResponseBuffer(const char* data, uint64_t size);
-
-	~InlineResponseBuffer() = default;
-
-	InlineResponseBuffer(InlineResponseBuffer&& other) noexcept;
-
-	InlineResponseBuffer& operator=(InlineResponseBuffer&& other) noexcept;
-
-	void assign(const char* data, uint64_t size);
-
-	const char* data() const { return m_size <= kInlineCapacity ? m_inlineBuffer : m_heapBuffer.data(); }
-
-	uint64_t size() const { return m_size; }
-
-	InlineResponseBuffer(const InlineResponseBuffer& other) = delete;
-	InlineResponseBuffer& operator=(const InlineResponseBuffer& other) = delete;
-};
-
-
-
 class RandomGenerator {
 
 public:
