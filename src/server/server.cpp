@@ -8,8 +8,6 @@
 Server::Server(asio::io_context& io, Config& config) : m_config(config), 
 														m_acceptor(io, tcp::endpoint(asio::ip::make_address(config.bind), config.port))
 {
-	m_config = config;
-
 	RandomGenerator randomGen;
 	m_routingHashSeed = randomGen.getRandomInteger(1, std::numeric_limits<long long>::max());
 
