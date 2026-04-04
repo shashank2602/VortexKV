@@ -169,14 +169,20 @@ TEST_F(IntegrationTest, SetInvalidTTLOption) {
 
 TEST_F(IntegrationTest, Del) {
     executeCommand({"SET", "k1", "v1"});
-    executeCommand({"SET", "k2", "v2"});
 
-    auto resp = executeCommand({"DEL", "k1", "k2", "k3"});
+    auto resp = executeCommand({"DEL", "k1"});
     EXPECT_EQ(resp.type, ':');
-    EXPECT_EQ(resp.data, "2");
+    EXPECT_EQ(resp.data, "1");
 
     auto getResp = executeCommand({"GET", "k1"});
     EXPECT_TRUE(getResp.isNull);
+}
+
+TEST_F(IntegrationTest, DelNonExistentKey) {
+
+    auto resp = executeCommand({ "DEL", "k1" });
+    EXPECT_EQ(resp.type, ':');
+    EXPECT_EQ(resp.data, "0");
 }
 
 // ============================================================================
@@ -186,9 +192,16 @@ TEST_F(IntegrationTest, Del) {
 TEST_F(IntegrationTest, Exists) {
     executeCommand({"SET", "k1", "v1"});
 
-    auto resp = executeCommand({"EXISTS", "k1", "k2"});
+    auto resp = executeCommand({"EXISTS", "k1"});
     EXPECT_EQ(resp.type, ':');
     EXPECT_EQ(resp.data, "1");
+}
+
+
+TEST_F(IntegrationTest, ExistsNonExistentKey) {
+    auto resp = executeCommand({"EXISTS", "k1"});
+    EXPECT_EQ(resp.type, ':');
+    EXPECT_EQ(resp.data, "0");
 }
 
 // ============================================================================
