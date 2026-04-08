@@ -2,6 +2,7 @@
 
 #include <new>
 #include <algorithm>
+#include <cstdlib>
 
 
 SlabAllocator::SlabAllocator(uint64_t allocatedPageSize, std::vector<uint64_t> slotSizes)
@@ -30,7 +31,7 @@ SlabAllocator::SlabAllocator(uint64_t allocatedPageSize, std::vector<uint64_t> s
 SlabAllocator::~SlabAllocator() 
 {
 	for (Byte* page : m_pages) {
-		delete[] page;
+		std::free(page);
 	}
 }
 
@@ -42,7 +43,9 @@ SlabAllocator::~SlabAllocator()
 void SlabAllocator::grow(Slab& slab)
 {
 	uint64_t slotsPerSlab = m_allocatedPageSize / slab.size;
-	Byte* page = new Byte[m_allocatedPageSize];
+	Byte* page = static_cast<Byte*>(std::malloc(m_allocatedPageSize));
+	if (!page)
+		throw std::bad_alloc();
 	m_pages.push_back(page);
 	for (auto i = 0; i < slotsPerSlab; i++)
 	{
