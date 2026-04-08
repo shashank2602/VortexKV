@@ -244,6 +244,15 @@ public:
 
 	inline uint64_t size() const { return m_objectCount; }
 
+	void clear() {
+		m_table.freeMemory();
+		m_tableOld.freeMemory();
+		m_objectCount = 0;
+		m_resizeThreshold = 0;
+		m_isResizing = false;
+		m_migrateIndex = 0;
+	}
+
 	inline void prefetchForKey(std::string_view key) {
 		uint32_t hash = calculateHash(key.data(), key.size());
 		uint32_t mask = (uint32_t)m_table.keys.size() - 1;

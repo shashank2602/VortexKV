@@ -46,6 +46,10 @@ void Shard::Run()
 {
 	RunMaintenanceLoop();
 	m_ioContext.run();
+
+	// Clear database on the shard's own thread before thread-local SlabAllocator is destroyed.
+	// CompactStrings must be deallocated by the same thread's allocator that allocated them.
+	m_database.clear();
 }
 
 

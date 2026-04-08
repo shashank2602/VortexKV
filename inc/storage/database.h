@@ -99,6 +99,10 @@ public:
 
 	void runMaintenance();
 
+	void clear() {
+		m_storage.clear();
+	}
+
 	void updateCurrentTime(int64_t time);
 
 	inline void prefetchForKey(std::string_view key)
