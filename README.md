@@ -45,7 +45,7 @@ A high-performance, multithreaded, shared-nothing, Redis-compatible in-memory ke
 │  core 0)     ││  core 1)     ││  core 2)     ││              ││  core N-1)   │
 │──────────────││──────────────││──────────────││──────────────││──────────────│
 │ Own thread   ││ Own thread   ││ Own thread   ││ Own thread   ││ Own thread   │
-│(std::jthread)│ (std::jthread)│ (std::jthread)│ (std::jthread)│ (std::jthread)│
+│(std::jthread)││(std::jthread)││(std::jthread)││(std::jthread)││(std::jthread)│
 │──────────────││──────────────││──────────────││──────────────││──────────────│
 │Own io_context││Own io_context││Own io_context││Own io_context││Own io_context│
 │──────────────││──────────────││──────────────││──────────────││──────────────│
