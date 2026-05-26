@@ -111,7 +111,7 @@ EXTERNAL DEPENDENCIES:
 │              │              │              │  routing)    │
 └──────────────┴──────────────┴──────────────┴──────────────┘
 ```
->With shard = 1, VortexKV matches the single-threaded RapidKV within a few percent — validating that the shared-nothing abstraction adds near-zero overhead when cross-shard routing isn't needed.
+>With shard = 1, VortexKV matches the single-threaded  within a few percent — validating that the shared-nothing abstraction adds near-zero overhead when cross-shard routing isn't needed.
 
 ---
 
@@ -314,7 +314,7 @@ EXTERNAL DEPENDENCIES:
 | 32 | 1,736,663 | 1,572,802 | −9.4% | 0.559 ms | 0.575 ms |
 | 64 | 2,403,368 | 2,551,297 | **+6.2%** | 0.351 ms | 0.351 ms |
 
-**Key takeaway:** At low shard counts, Dragonfly leads by ~8–12% — likely due to its mature per-thread optimizations. As shards scale up, the gap narrows significantly, and at full 64-core saturation RapidKV overtakes Dragonfly with **+6.2% higher throughput** and matching p99 latency. The shared-nothing architecture's advantage materializes at high core counts where cross-core contention becomes the bottleneck.
+**Key takeaway:** At low shard counts, Dragonfly leads by ~8–12% — likely due to its mature per-thread optimizations. As shards scale up, the gap narrows significantly, and at full 64-core saturation VortexKV overtakes Dragonfly with **+6.2% higher throughput** and matching p99 latency. The shared-nothing architecture's advantage materializes at high core counts where cross-core contention becomes the bottleneck.
 
 ---
 
