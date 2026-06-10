@@ -442,7 +442,7 @@ private:
 
 	void resizeStep() {
 		uint32_t steps = m_currentResizeStep;
-		while (steps-- > 0 && m_migrateIndex < m_tableOld.size)
+		while (m_migrateIndex < m_tableOld.size && (steps-- > 0 || m_tableOld.metadata[m_migrateIndex].psl != 0))
 		{
 			if (m_tableOld.metadata[m_migrateIndex].psl != 0)
 			{
