@@ -88,8 +88,6 @@ public:
 
 	InlineVector(InlineVector&& other) noexcept
 	{
-		if (this == &other)
-			return;
 		this->m_size = other.m_size;
 		this->m_heapCap = other.m_heapCap;
 		this->m_heap = other.m_heap;
@@ -134,6 +132,8 @@ public:
 		other.m_size = 0;
 		other.m_heapCap = 0;
 		other.m_heap = nullptr;
+
+		return *this;
 	}
 
 
