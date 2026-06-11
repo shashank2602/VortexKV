@@ -2,6 +2,9 @@
 
 
 
+static constexpr int kMaxBulkLen = 512 * 1024 * 1024; // 500 mb , Redis default max bulk string length
+
+
 std::pair<ParseStatus, int> RESPParser::parse(const std::string_view data, CommandRequest& outCommand)
 {
 	outCommand.reset();
@@ -72,7 +75,7 @@ ParseResult RESPParser::getBulkString(std::string_view data)
 		if (strLength == -1)
 			return { parseLengthStatus, 1 + parseLengthDataRead, {}, {} };
 
-		if (strLength < -1)
+		if (strLength < -1 || strLength > kMaxBulkLen)
 			return { ParseStatus::Error, 1 + parseLengthDataRead, {}, {} };
 
 		auto [status, dataRead, _, str] = getLineOfLength(data.substr(1 + parseLengthDataRead), strLength);
