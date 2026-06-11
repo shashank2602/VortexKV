@@ -273,7 +273,7 @@ private:
 
 		uint32_t mask = (uint32_t)m_table.keys.size() - 1;
 		uint32_t keyPos = hash & mask;
-		Metadata newEntryMetadata (1, static_cast<uint8_t>(hash & 0xFF));
+		Metadata newEntryMetadata (1, static_cast<uint8_t>(hash >> 25));
 		const uint8_t newTag = newEntryMetadata.getTag();
 
 		PREFETCH_READ(&m_table.metadata[keyPos], PREFETCH_L1);
@@ -390,7 +390,7 @@ private:
 		PREFETCH_READ(&table.metadata[keyPos], PREFETCH_L1);
 		PREFETCH_READ(&table.keys[keyPos], PREFETCH_L1);
 
-		Metadata newEntryMetadata(1, static_cast<uint8_t>(hash & 0xFF));
+		Metadata newEntryMetadata(1, static_cast<uint8_t>(hash >> 25));
 		const uint8_t newTag = newEntryMetadata.getTag();
 		auto&& metadata = table.metadata;
 
