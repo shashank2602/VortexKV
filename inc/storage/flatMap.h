@@ -120,7 +120,7 @@ public:
 		if (m_isResizing)
 		{
 			resizeStep();
-			remove(std::string_view(key.data(), key.length()), m_tableOld);
+			m_objectCount -= remove(std::string_view(key.data(), key.length()), m_tableOld);
 		}
 
 		bool newEntryInserted = rawInsert(std::move(key), std::move(value), storedHash);
@@ -193,7 +193,7 @@ public:
 				}
 				else 
 				{
-					remove(candidateKey, targetTable);
+					m_objectCount -= remove(candidateKey, targetTable);
 					return true;
 				}
 			}
@@ -203,7 +203,7 @@ public:
 
 		if (mustEvict && !candidateKey.empty())
 		{
-			remove(candidateKey, targetTable);
+			m_objectCount -= remove(candidateKey, targetTable);
 			return true;
 		}	
 		
