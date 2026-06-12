@@ -13,6 +13,7 @@
 
 constexpr uint64_t INITIAL_MAP_SIZE = 256;
 constexpr double RESIZE_LOAD_FACTOR = 0.80;
+constexpr double EVICTION_LOAD_FACTOR = 0.90;
 constexpr uint64_t DEFAULT_RESIZE_STEP_COUNT = 32;
 constexpr uint32_t PREFETCH_DISTANCE = 2; // Prefetch 2 slots ahead in probe sequence
 
@@ -92,6 +93,7 @@ private:
 	Table m_table, m_tableOld;
 	uint32_t m_objectCount = 0;
 	uint32_t m_resizeThreshold = 0; // Cached threshold to avoid division
+	uint32_t m_evictThreshold = 0; 
 	bool m_isResizing = false;
 	bool m_allowGrowth = true;
 	bool m_evictDuringMigration = false;
@@ -109,7 +111,7 @@ public:
 	{
 		static_assert((INITIAL_MAP_SIZE & (INITIAL_MAP_SIZE - 1)) == 0, "Initial map size must be a power of two");
 		m_table.resize(INITIAL_MAP_SIZE);
-		updateResizeThreshold();
+		updateSizeThresholds();
 	}
 
 
@@ -279,6 +281,9 @@ private:
 		PREFETCH_READ(&m_table.metadata[keyPos], PREFETCH_L1);
 		PREFETCH_READ(&m_table.keys[keyPos], PREFETCH_L1);
 
+		if(m_objectCount >= m_evictThreshold)
+			evictOneEntry();
+
 		for (uint32_t i = 0; i < m_table.size; i++)
 		{
 			// Prefetch ahead in the probe sequence
@@ -323,6 +328,9 @@ private:
 
 			keyPos = (keyPos + 1) & mask;
 			newEntryMetadata.psl++;
+
+			if(newEntryMetadata.psl >= 255) [[unlikely]]
+				break;
 		}
 		return false;
 	}
@@ -426,8 +434,9 @@ private:
 		return static_cast<double>(m_objectCount) / static_cast<double>(m_table.size);
 	}
 
-	void updateResizeThreshold() {
+	void updateSizeThresholds() {
 		m_resizeThreshold = static_cast<uint32_t>(m_table.size * RESIZE_LOAD_FACTOR);
+		m_evictThreshold = static_cast<uint32_t>(m_table.size * EVICTION_LOAD_FACTOR);
 	}
 
 	void startResize() {
@@ -437,7 +446,7 @@ private:
 		m_migrateIndex = 0;
 		m_isResizing = true;
 		m_sieveHand = 0;
-		updateResizeThreshold();
+		updateSizeThresholds();
 	}
 
 	void resizeStep() {
