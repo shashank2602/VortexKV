@@ -14,6 +14,7 @@ struct Config {
     std::string bind = "0.0.0.0";
 	int shardCount = std::thread::hardware_concurrency();
     int maintenanceIntervalMs = 100;
+    int idleTimeoutSec = 300; // close a connection after this many seconds of inactivity; 0 disables
     uint64_t maxMemoryUsage = 8ULL * 1024 * 1024 * 1024; // 8 GB
 
     static Config loadFromFile(const std::string& path)
@@ -95,6 +96,19 @@ struct Config {
                         else
                         {
                             config.maintenanceIntervalMs = intervalVal;
+                        }
+                    }
+                    else if (key == "idle_timeout_sec")
+                    {
+                        int idleVal = std::stoi(value);
+                        if (idleVal < 0)
+                        {
+                            std::cerr << "Warning: Invalid idle_timeout_sec value " << idleVal
+                                      << " on line " << lineNumber << ", using default." << std::endl;
+                        }
+                        else
+                        {
+                            config.idleTimeoutSec = idleVal;
                         }
                     }
                     else if (key == "max_memory_usage")

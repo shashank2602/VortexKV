@@ -5,13 +5,15 @@
 #include <iostream>
 
 Connection::Connection(tcp::socket socket, uint64_t routingHashSeed, std::vector<std::unique_ptr<Shard>>& shardPool, int shardId) :
-																	m_socket(std::move(socket)), m_ownerShard(*shardPool[shardId]),
+																	m_socket(std::move(socket)), m_idleTimer(m_socket.get_executor()),
+																	m_ownerShard(*shardPool[shardId]),
 																	m_dispatcher(m_ownerShard.GetDispatcher()), m_database(m_ownerShard.GetDatabase()),
 																	m_pPrimaryResponseBuffer(&m_primaryResponseBuffer),
 																	m_pSecondaryResponseBuffer(&m_secondaryResponseBuffer),
 																	m_writingInProgress(false), m_routingHashSeed(routingHashSeed), m_shardPool(shardPool),
 																	m_shardId(shardId), m_pipelinedRequests(16), m_fastModDivisor(shardPool.size())
 {
+	m_idleTimeout = std::chrono::seconds(m_ownerShard.GetIdleTimeoutSec());
 	m_pipelinedResponses.reserve(16);
 	for (int i = 0 ; i < m_pipelinedResponses.capacity() ; i++)
 		m_pipelinedResponses.emplace_back(128);
@@ -25,7 +27,31 @@ Connection::~Connection()
 
 void Connection::Start()
 {
+	m_lastActivity = m_ownerShard.CoarseNow();
+	ArmIdleTimer();
 	DoRead();
+}
+
+
+void Connection::ArmIdleTimer()
+{
+	if (m_idleTimeout.count() == 0)		// idle timeout disabled
+		return;
+
+	m_idleTimer.expires_at(m_lastActivity + m_idleTimeout);
+
+	std::weak_ptr<Connection> weakSelf = weak_from_this();
+	m_idleTimer.async_wait([weakSelf](asio::error_code errorCode) {
+		if (errorCode)		// cancelled (re-armed or connection closing)
+			return;
+		auto self = weakSelf.lock();
+		if (!self)
+			return;
+		if (self->m_ownerShard.CoarseNow() - self->m_lastActivity >= self->m_idleTimeout)
+			self->CloseConnection();
+		else
+			self->ArmIdleTimer();
+	});
 }
 
 
@@ -42,6 +68,8 @@ void Connection::DoRead()
 				CloseConnection();
 				return;
 			}
+
+			m_lastActivity = m_ownerShard.CoarseNow();
 
 			m_requestBuffer.seekWrite(bytesRead);
 
@@ -140,7 +168,13 @@ void Connection::FlushPipelinedResponses()
 {
 	for(int i = 0; i < m_pipelinedRequestCount; ++i)
 		m_pSecondaryResponseBuffer->append(m_pipelinedResponses[i].readPtr(), m_pipelinedResponses[i].size());
-			
+
+	if (m_pPrimaryResponseBuffer->size() + m_pSecondaryResponseBuffer->size() > kOutputHardLimit) [[unlikely]]
+	{
+		CloseConnection();
+		return;
+	}
+
 	m_pipelinedRequestCount = 0;
 	m_pipelinedResponseCount = 0;
 
@@ -157,8 +191,15 @@ void Connection::FlushPipelinedResponses()
 		return;
 	}
 
-	if (CheckResponseBufferLimits())
-		DoRead();
+	// Backpressure instead of disconnect
+	size_t pendingWriteBytes = m_pPrimaryResponseBuffer->size() + m_pSecondaryResponseBuffer->size();
+	if (pendingWriteBytes > kWriteHighWatermark)
+	{
+		m_readPaused = true;
+		return;
+	}
+
+	DoRead();
 }
 
 
@@ -179,38 +220,37 @@ void Connection::TryWrite()
 		asio::bind_allocator(asio::recycling_allocator<void>(),
 		
 		[this, self](asio::error_code errorCode, std::size_t bytesWritten){
-			
+
 			m_writingInProgress = false;
 			m_pPrimaryResponseBuffer->reset();
-			if (!errorCode)
-			{
-				TryWrite();
-			}
-			else
+			if (errorCode)
 			{
 				CloseConnection();
+				return;
 			}
-		
+
+			m_lastActivity = m_ownerShard.CoarseNow();
+
+			TryWrite();
+
+			if (m_readPaused)
+			{
+				size_t pendingWriteBytes = m_pPrimaryResponseBuffer->size() + m_pSecondaryResponseBuffer->size();
+				if (pendingWriteBytes <= kWriteLowWatermark)
+				{
+					m_readPaused = false;
+					DoRead();
+				}
+			}
 		})
 	);
-}
-
-
-bool Connection::CheckResponseBufferLimits()
-{
-	size_t pendingSize = m_pPrimaryResponseBuffer->size() + m_pSecondaryResponseBuffer->size();
-	if (pendingSize > kHardOutputLimit)
-	{
-		CloseConnection();
-		return false;
-	}
-	return true;
 }
 
 
 void Connection::CloseConnection()
 {
 	asio::error_code ignored;
+	m_idleTimer.cancel();
 	m_socket.shutdown(tcp::socket::shutdown_both, ignored);
 	m_socket.close(ignored);
 }

@@ -69,6 +69,7 @@ void Shard::RunMaintenanceLoop()
 		{
 			if (!ec)
 			{
+				m_coarseNow = std::chrono::steady_clock::now();
 				m_database.runMaintenance();
 				RunMaintenanceLoop();
 			}

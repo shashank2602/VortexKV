@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 #include <memory>
+#include <chrono>
 
 
 using asio::ip::tcp;
@@ -30,6 +31,8 @@ private:
 	std::jthread m_thread;
 
 	uint64_t m_routingHashSeed = 0;
+
+	std::chrono::steady_clock::time_point m_coarseNow{ std::chrono::steady_clock::now() }; // Coarse monotonic clock, refreshed once per maintenance tick (~maintenanceIntervalMs).
 
 	std::vector<std::unique_ptr<Shard>>& m_shardPool;
 
@@ -61,6 +64,10 @@ public:
 	}
 
 	asio::io_context& GetIOContext() { return m_ioContext; }
+
+	int GetIdleTimeoutSec() const { return m_config.idleTimeoutSec; }
+
+	std::chrono::steady_clock::time_point CoarseNow() const { return m_coarseNow; }
 
 	Database& GetDatabase() { return m_database; }
 
